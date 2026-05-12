@@ -21,3 +21,9 @@ __pycache__/
 # Service account keys — NEVER commit
 service-account*.json
 *-credentials.json
+*-key*.json
+caramelo-v2-*.json
+Caramelo-bot-key*
+
+# Misc local files
+*.rtf
