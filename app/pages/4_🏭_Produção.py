@@ -158,13 +158,12 @@ with tab_new:
         # Save
         if st.button("💾 Registrar fornada", type="primary", use_container_width=True):
             try:
-                from lib import sheets as _sheets
                 service = data.get_service()
 
                 # Each (tamanho, com quantidades) vira UMA linha na aba Fornadas
                 created_ids = []
                 for _, r in df.iterrows():
-                    new_id = _sheets._next_id_for_prefix(
+                    new_id = data._sheets._next_id_for_prefix(
                         data._spreadsheet_id(), "Fornadas!A:A", "FN", service=service
                     )
 

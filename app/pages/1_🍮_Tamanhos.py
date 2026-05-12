@@ -192,8 +192,7 @@ with tab_new:
         # Generate next TAM-NNN ID
         try:
             service = data.get_service()
-            from lib import sheets as _sheets
-            new_id = _sheets._next_id_for_prefix(
+            new_id = data._sheets._next_id_for_prefix(
                 data._spreadsheet_id(), "Tamanhos!A:A", "TAM", service=service
             )
 

@@ -8,17 +8,26 @@ After any write, call invalidate_cache() to force a reload.
 """
 
 import os
-import sys
 import json
+import importlib.util
 from typing import Optional
 import streamlit as st
 import pandas as pd
 
-# Make bot/lib importable
+# Load bot/lib/sheets.py via importlib to avoid namespace collision with app/lib
+# (both packages are named 'lib' which confuses Python's import system).
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(REPO_ROOT, "bot"))
+_SHEETS_PATH = os.path.join(REPO_ROOT, "bot", "lib", "sheets.py")
 
-from lib import sheets as _sheets  # noqa: E402
+
+def _load_bot_sheets():
+    spec = importlib.util.spec_from_file_location("bot_sheets", _SHEETS_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_sheets = _load_bot_sheets()
 
 
 CACHE_TTL_SECONDS = 30
