@@ -225,18 +225,35 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
     for idx, item in enumerate(itens):
         if resolved[idx] is None:
             prod = item.get("produto_match")
-            # Auto-resolve if alias-backed OR high-confidence fuzzy match
-            if prod and (prod.get("from_alias") or prod.get("match_confidence") == "alta"):
+
+            # Alias takes precedence over categoria — if learned, use it
+            if prod and prod.get("from_alias"):
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
-                if prod.get("from_alias"):
-                    tg.send_message(
-                        chat_id,
-                        f"🤖 Item {idx+1} reconhecido: <b>{_esc(prod['nome'])}</b> (via memória)",
-                    )
+                tg.send_message(
+                    chat_id,
+                    f"🤖 Item {idx+1} reconhecido: <b>{_esc(prod['nome'])}</b> (via memória)",
+                )
                 state.delete_state(_spreadsheet_id(), state_id, service=service)
                 new_id = state.save_state(_spreadsheet_id(), payload, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
+
+            # Auto-skip items Gemini classified as not-an-insumo
+            if item.get("categoria") == "OUTRO":
+                payload["items_resolved"][idx] = {"action": "skip", "reason": "outro"}
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, service=service)
+                _next_step(chat_id, new_id, payload, service=service)
+                return
+
+            # Auto-resolve high-confidence fuzzy match
+            if prod and prod.get("match_confidence") == "alta":
+                payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, service=service)
+                _next_step(chat_id, new_id, payload, service=service)
+                return
+
             _ask_item(chat_id, state_id, payload, idx)
             return
 
@@ -325,29 +342,36 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
     itens = payload.get("itens", [])
     resolved = payload.get("items_resolved", [])
 
-    lines = [
-        f"📝 <b>Pronto pra salvar?</b>",
-        f"Fornecedor: <b>{_esc(forn_name)}</b>",
-        f"Data: {_esc(payload.get('data') or 'hoje')}",
-        "",
-        "<b>Itens:</b>",
-    ]
-    n_save = 0
+    included = []
+    skipped_outro = []
+    skipped_manual = []
     for idx, item in enumerate(itens):
         r = resolved[idx]
         desc = _esc(item.get("descricao", "?"))
         preco = item.get("preco_total", 0)
         if not r or r["action"] == "skip":
-            lines.append(f"  ⏭ <s>{desc} — R$ {preco:.2f}</s>")
+            line = f"  <s>{desc}</s> — R$ {preco:.2f}"
+            if r and r.get("reason") == "outro":
+                skipped_outro.append(line)
+            else:
+                skipped_manual.append(line)
         else:
-            n_save += 1
-            lines.append(f"  ✓ {desc} → {r['produto_id']} — R$ {preco:.2f}")
+            included.append(f"  ✓ {desc} → {r['produto_id']} — R$ {preco:.2f}")
 
-    lines.append("")
-    lines.append(f"Vou adicionar <b>{n_save}</b> compra(s) à aba Compras.")
+    lines = [
+        f"📝 <b>Pronto pra salvar?</b>",
+        f"Fornecedor: <b>{_esc(forn_name)}</b>",
+        f"Data: {_esc(payload.get('data') or 'hoje')}",
+    ]
+    if included:
+        lines += ["", f"<b>Vou adicionar ({len(included)}):</b>"] + included
+    if skipped_outro:
+        lines += ["", f"<b>Ignorados (não-insumos, {len(skipped_outro)}):</b>"] + skipped_outro
+    if skipped_manual:
+        lines += ["", f"<b>Pulados ({len(skipped_manual)}):</b>"] + skipped_manual
 
     buttons = [
-        [{"text": "💾 Salvar tudo", "callback_data": f"save:{state_id}"}],
+        [{"text": f"💾 Salvar {len(included)} compra(s)", "callback_data": f"save:{state_id}"}],
         [{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}],
     ]
     tg.send_message_with_buttons(chat_id, "\n".join(lines), buttons)
@@ -396,12 +420,20 @@ def _format_overview(receipt: dict) -> str:
     else:
         forn_line = f"<b>Fornecedor:</b> ⚠️ <code>{_esc(receipt.get('fornecedor', '?'))}</code>"
 
+    itens = receipt.get("itens", [])
+    outros = [it for it in itens if it.get("categoria") == "OUTRO" and not (it.get("produto_match") and it["produto_match"].get("from_alias"))]
+
     lines = [
         forn_line,
         f"<b>Data:</b> {_esc(receipt.get('data') or 'não detectada')}",
         f"<b>Total da nota:</b> R$ {receipt.get('total', 0):.2f}",
-        f"<b>Itens:</b> {len(receipt.get('itens', []))}",
+        f"<b>Itens:</b> {len(itens)} total" + (f", {len(outros)} ignorado(s) (não-insumos)" if outros else ""),
     ]
+    if outros:
+        lines.append("")
+        lines.append("<b>Vou ignorar (não-insumos):</b>")
+        for it in outros:
+            lines.append(f"  ⏭ <s>{_esc(it.get('descricao', '?'))}</s> — R$ {it.get('preco_total', 0):.2f}")
     if receipt.get("observacoes"):
         lines.append("")
         lines.append(f"<i>{_esc(receipt['observacoes'])}</i>")
