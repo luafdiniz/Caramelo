@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "bot/api/*.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "bot/lib/**"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/webhook",
+      "dest": "/bot/api/webhook.py"
+    },
+    {
+      "src": "/api/whoami",
+      "dest": "/bot/api/whoami.py"
+    }
+  ]
+}
