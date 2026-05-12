@@ -68,22 +68,83 @@ def get_fornecedores(spreadsheet_id: str, service=None) -> list[dict]:
     ]
 
 
-def get_next_compra_id(spreadsheet_id: str, service=None) -> str:
-    """Find the next available C-NNN ID."""
+def _next_id_for_prefix(spreadsheet_id: str, sheet_range: str, prefix: str, service=None) -> str:
+    """Find next available ID like PREFIX-NNN by scanning column A of a range."""
     service = service or get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Compras!A:A"
+        spreadsheetId=spreadsheet_id, range=sheet_range
     ).execute()
     rows = result.get("values", [])
     max_n = 0
     for r in rows:
-        if r and r[0].startswith("C-"):
+        if r and r[0].startswith(f"{prefix}-"):
             try:
                 n = int(r[0].split("-")[1])
                 max_n = max(max_n, n)
             except (ValueError, IndexError):
                 continue
-    return f"C-{max_n + 1:03d}"
+    return f"{prefix}-{max_n + 1:03d}"
+
+
+def get_next_compra_id(spreadsheet_id: str, service=None) -> str:
+    """Find the next available C-NNN ID."""
+    return _next_id_for_prefix(spreadsheet_id, "Compras!A:A", "C", service=service)
+
+
+def create_fornecedor(
+    spreadsheet_id: str,
+    nome: str,
+    tipo: str = "Loja",
+    localizacao: str = "",
+    notas: str = "Cadastrado via bot",
+    service=None,
+) -> str:
+    """Add a new fornecedor row. Returns the new FORN-NNN ID."""
+    service = service or get_service()
+    new_id = _next_id_for_prefix(spreadsheet_id, "Fornecedores!A:A", "FORN", service=service)
+
+    # Find next empty row
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Fornecedores!A:A"
+    ).execute()
+    next_row = len(result.get("values", [])) + 1
+
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"Fornecedores!A{next_row}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[new_id, nome, tipo, localizacao, notas]]},
+    ).execute()
+    return new_id
+
+
+def create_produto(
+    spreadsheet_id: str,
+    nome: str,
+    categoria: str,  # "ALI", "FOR", "EMB", "EQP"
+    unidade: str = "UN",
+    notas: str = "Cadastrado via bot",
+    service=None,
+) -> str:
+    """Add a new produto row. Returns the new ID with category prefix."""
+    if categoria not in ("ALI", "FOR", "EMB", "EQP"):
+        raise ValueError(f"Invalid categoria: {categoria}")
+
+    service = service or get_service()
+    new_id = _next_id_for_prefix(spreadsheet_id, "Produtos!A:A", categoria, service=service)
+
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Produtos!A:A"
+    ).execute()
+    next_row = len(result.get("values", [])) + 1
+
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"Produtos!A{next_row}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[new_id, nome, unidade, notas]]},
+    ).execute()
+    return new_id
 
 
 def append_compra(

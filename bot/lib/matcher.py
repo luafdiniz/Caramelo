@@ -9,8 +9,11 @@ from rapidfuzz import fuzz, process
 
 
 # Confidence thresholds (0-100)
-HIGH_CONFIDENCE = 85
-MEDIUM_CONFIDENCE = 65
+# Tuned for Brazilian receipts where item descriptions are abbreviated/truncated
+# and supplier names on receipts often include "Atacado & Varejo" type suffixes
+# while our cadastro is short.
+HIGH_CONFIDENCE = 80
+MEDIUM_CONFIDENCE = 50
 
 
 def match_fornecedor(name: str, fornecedores: list[dict]) -> Optional[dict]:

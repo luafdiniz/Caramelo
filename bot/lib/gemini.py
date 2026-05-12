@@ -28,6 +28,7 @@ Analise a imagem da nota e retorne APENAS um JSON válido com este formato exato
     {
       "descricao": "Nome do item como aparece na nota",
       "marca": "Marca se identificável, ou null",
+      "categoria": "ALI" | "FOR" | "EMB" | "EQP" | "OUTRO",
       "qtde_embalagens": 1,
       "unidades_por_embalagem": 1,
       "preco_unitario": 0.00,
@@ -45,6 +46,14 @@ Regras:
 - "qtde_embalagens" = quantos pacotes/unidades de venda foram comprados (ex: 2 pacotes)
 - "unidades_por_embalagem" = quantos itens em cada pacote (ex: pente de 30 ovos = 30; sacola individual = 1)
 - "preco_total" = preço total pago por essa linha (qtde × preço unit)
+
+Categoria (importante!):
+- ALI = alimentos/ingredientes comestíveis (açúcar, leite, ovo, leite condensado, farinha, etc.)
+- FOR = formas para pudim/bolo (forma plástica, alumínio, etc.)
+- EMB = embalagens (sacola, fita, barbante, etiqueta, adesivo, celofane, colher descartável, etc.)
+- EQP = equipamentos/utensílios duráveis (panela, grade, luva, espátula, etc.)
+- OUTRO = item que não se encaixa (ex: bebidas pessoais, produtos de limpeza, comida fora do contexto)
+
 - Para notas manuscritas ou com itens ilegíveis, marque confianca: "baixa" e explique em observacoes
 - Se houver desconto aplicado ao total, mencione em observacoes mas mantenha preco_total dos itens conforme aparecem
 - NÃO invente dados. Se algo está ilegível, escreva "ILEGÍVEL" na descrição e marque confianca: "baixa"

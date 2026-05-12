@@ -80,7 +80,12 @@ def load_state(spreadsheet_id: str, state_id: str, service=None) -> Optional[dic
     rows = result.get("values", [])
     for r in rows:
         if r and r[0] == state_id:
-            return json.loads(r[2]) if len(r) > 2 else None
+            if len(r) <= 2 or not r[2] or r[2] == "CONSUMED":
+                return None
+            try:
+                return json.loads(r[2])
+            except json.JSONDecodeError:
+                return None
     return None
 
 
