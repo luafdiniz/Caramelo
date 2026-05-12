@@ -20,7 +20,7 @@ def _api_url(method: str, token: Optional[str] = None) -> str:
 def send_message(
     chat_id: int,
     text: str,
-    parse_mode: str = "Markdown",
+    parse_mode: str = "HTML",
     reply_to_message_id: Optional[int] = None,
     token: Optional[str] = None,
 ) -> dict:
@@ -42,7 +42,7 @@ def send_message_with_buttons(
     chat_id: int,
     text: str,
     buttons: list[list[dict]],
-    parse_mode: str = "Markdown",
+    parse_mode: str = "HTML",
     token: Optional[str] = None,
 ) -> dict:
     """
@@ -65,7 +65,7 @@ def edit_message_text(
     chat_id: int,
     message_id: int,
     text: str,
-    parse_mode: str = "Markdown",
+    parse_mode: str = "HTML",
     reply_markup: Optional[dict] = None,
     token: Optional[str] = None,
 ) -> dict:

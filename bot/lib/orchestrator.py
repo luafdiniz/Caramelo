@@ -28,43 +28,45 @@ CONFIDENCE_EMOJI = {
 }
 
 
+def _esc(s) -> str:
+    """Escape HTML special chars for Telegram HTML parse mode."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def format_receipt_summary(receipt: dict) -> str:
-    """Format an enriched receipt as Telegram Markdown."""
+    """Format an enriched receipt as Telegram HTML."""
     forn = receipt.get("fornecedor_match")
-    forn_line = (
-        f"*Fornecedor:* {forn['id']} — {forn['nome']} {CONFIDENCE_EMOJI.get(forn['match_confidence'], '')}"
-        if forn
-        else f"*Fornecedor:* ⚠️ `{receipt.get('fornecedor', '?')}` (não encontrado — vou criar novo)"
-    )
+    if forn:
+        forn_line = f"<b>Fornecedor:</b> {_esc(forn['id'])} — {_esc(forn['nome'])} {CONFIDENCE_EMOJI.get(forn['match_confidence'], '')}"
+    else:
+        forn_line = f"<b>Fornecedor:</b> ⚠️ <code>{_esc(receipt.get('fornecedor', '?'))}</code> (não encontrado — cadastre antes)"
 
-    data_line = f"*Data:* {receipt.get('data') or 'não detectada'}"
-    total_line = f"*Total da nota:* R$ {receipt.get('total', 0):.2f}"
+    data_line = f"<b>Data:</b> {_esc(receipt.get('data') or 'não detectada')}"
+    total_line = f"<b>Total da nota:</b> R$ {receipt.get('total', 0):.2f}"
 
-    lines = [forn_line, data_line, total_line, "", "*Itens:*"]
+    lines = [forn_line, data_line, total_line, "", "<b>Itens:</b>"]
 
     for i, item in enumerate(receipt.get("itens", []), 1):
         prod = item.get("produto_match")
         conf = CONFIDENCE_EMOJI.get(item.get("confianca", "media"), "")
         if prod:
             match_conf = CONFIDENCE_EMOJI.get(prod["match_confidence"], "")
-            prod_line = f"→ {prod['id']} {prod['nome']} {match_conf}"
+            prod_line = f"→ {_esc(prod['id'])} {_esc(prod['nome'])} {match_conf}"
         else:
-            prod_line = f"→ ⚠️ Produto não encontrado (vai precisar cadastrar)"
+            prod_line = "→ ⚠️ Produto não encontrado (vai precisar cadastrar)"
 
-        marca = f" • {item['marca']}" if item.get("marca") else ""
+        marca = f" • {_esc(item['marca'])}" if item.get("marca") else ""
         qtd_emb = item.get("qtde_embalagens", 1)
         unid_emb = item.get("unidades_por_embalagem", 1)
         preco = item.get("preco_total", 0)
 
-        lines.append(
-            f"{i}. {conf} {item.get('descricao', '?')}{marca}"
-        )
+        lines.append(f"{i}. {conf} {_esc(item.get('descricao', '?'))}{marca}")
         lines.append(f"   {qtd_emb}x{unid_emb} unid — R$ {preco:.2f}")
         lines.append(f"   {prod_line}")
         lines.append("")
 
     if receipt.get("observacoes"):
-        lines.append(f"_{receipt['observacoes']}_")
+        lines.append(f"<i>{_esc(receipt['observacoes'])}</i>")
 
     return "\n".join(lines)
 
@@ -81,7 +83,7 @@ def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
     try:
         receipt = gemini.parse_receipt(image_bytes)
     except Exception as e:
-        tg.send_message(chat_id, f"❌ Erro ao processar a imagem: `{e}`")
+        tg.send_message(chat_id, f"❌ Erro ao processar a imagem: <code>{_esc(e)}</code>")
         return
 
     service = sheets.get_service()

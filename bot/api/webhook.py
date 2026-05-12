@@ -39,7 +39,7 @@ def _process_update(update: dict) -> None:
             image_bytes = tg.get_file_bytes(photo["file_id"])
             orchestrator.handle_photo(chat_id, photo["file_id"], image_bytes)
         except Exception as e:
-            tg.send_message(chat_id, f"❌ Erro: `{e}`")
+            tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
             traceback.print_exc()
         return
 
@@ -48,20 +48,20 @@ def _process_update(update: dict) -> None:
         chat_id = msg["chat"]["id"]
         text = msg["text"].strip()
         if not _allowed_chat(chat_id):
-            tg.send_message(chat_id, f"⛔ Não autorizado. Seu chat_id: `{chat_id}`")
+            tg.send_message(chat_id, f"⛔ Não autorizado. Seu chat_id: <code>{chat_id}</code>")
             return
         if text.startswith("/start") or text.startswith("/help"):
             tg.send_message(
                 chat_id,
-                "*Pudim Caramelo Bot* 🍮\n\n"
+                "<b>Pudim Caramelo Bot</b> 🍮\n\n"
                 "Manda uma foto de nota fiscal que eu extraio os itens e adiciono "
                 "na planilha (aba Compras).\n\n"
                 "Comandos:\n"
                 "/start /help — esta mensagem\n"
-                "/whoami — mostra seu chat_id",
+                "/whoami — mostra seu chat id",
             )
         elif text.startswith("/whoami"):
-            tg.send_message(chat_id, f"Seu chat_id: `{chat_id}`")
+            tg.send_message(chat_id, f"Seu chat_id: <code>{chat_id}</code>")
         else:
             tg.send_message(chat_id, "📸 Manda uma foto de nota fiscal pra eu processar.")
         return
@@ -82,7 +82,7 @@ def _process_update(update: dict) -> None:
             )
         except Exception as e:
             tg.answer_callback_query(cb["id"], "Erro processando")
-            tg.send_message(chat_id, f"❌ Erro: `{e}`")
+            tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
             traceback.print_exc()
         return
 
