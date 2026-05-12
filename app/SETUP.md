@@ -36,16 +36,20 @@ uma conta (link com GitHub).
 SPREADSHEET_ID = "1hV9zTIMyX3wlULkWAYN_-nBeNeM6adfL0Zz6MIvwFXE"
 APP_PASSWORD = "escolhe_uma_senha_forte_aqui"
 
-GOOGLE_SERVICE_ACCOUNT_JSON = """
+GOOGLE_SERVICE_ACCOUNT_JSON = '''
 {
   "type": "service_account",
   "project_id": "caramelo-v2",
   ... (cole o JSON inteiro do arquivo do service account aqui) ...
 }
-"""
+'''
 ```
 
-⚠️ **Atenção ao JSON:** as aspas triplas (`"""`) são importantes pra manter o JSON multi-linha. Cola exatamente o conteúdo do arquivo `caramelo-bot-key.json` entre as `"""`.
+⚠️ **CRÍTICO — use aspas triplas SIMPLES (`'''`), não duplas (`"""`):**
+- `'''` (literal) → mantém `\n` no JSON intacto ✓
+- `"""` (basic) → interpreta `\n` como quebra de linha real, **quebra o JSON** ✗
+
+Cola exatamente o conteúdo do arquivo `caramelo-bot-key.json` entre as `'''`.
 
 4. Clica em **Deploy**
 
