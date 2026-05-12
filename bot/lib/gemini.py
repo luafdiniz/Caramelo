@@ -73,7 +73,7 @@ def parse_receipt(image_bytes: bytes, api_key: Optional[str] = None) -> dict:
     client = genai.Client(api_key=api_key)
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash-exp",
+        model="gemini-2.0-flash",
         contents=[
             types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
             SYSTEM_PROMPT,
