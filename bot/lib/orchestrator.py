@@ -18,7 +18,7 @@ State is kept in the hidden _BotState tab. Keys we use in the state dict:
 
 import os
 from datetime import datetime
-from . import gemini, sheets, matcher, state, telegram_client as tg
+from . import gemini, sheets, matcher, state, aliases, telegram_client as tg
 
 
 SPREADSHEET_ID = None
@@ -56,6 +56,22 @@ def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
     fornecedores = sheets.get_fornecedores(_spreadsheet_id(), service=service)
 
     enriched = matcher.enrich_receipt(receipt, produtos, fornecedores)
+
+    # Apply alias memory BEFORE fuzzy match consideration:
+    # if there's a saved alias for this exact text, use it (auto-resolve)
+    sup_alias_id = aliases.check(_spreadsheet_id(), "FORNECEDOR", enriched.get("fornecedor", ""), service=service)
+    if sup_alias_id:
+        # Validate the alias still points to an existing fornecedor
+        forn = next((f for f in fornecedores if f["id"] == sup_alias_id), None)
+        if forn:
+            enriched["fornecedor_match"] = {**forn, "match_score": 100, "match_confidence": "alta", "from_alias": True}
+
+    for item in enriched.get("itens", []):
+        item_alias_id = aliases.check(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), service=service)
+        if item_alias_id:
+            prod = next((p for p in produtos if p["id"] == item_alias_id), None)
+            if prod:
+                item["produto_match"] = {**prod, "match_score": 100, "match_confidence": "alta", "from_alias": True}
 
     # Initialize state
     enriched["step"] = "review_supplier"
@@ -99,31 +115,43 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
 
     # Supplier decisions
     if action == "fuse":  # fornecedor: use suggestion
-        payload["resolved_supplier_id"] = payload["fornecedor_match"]["id"]
+        forn_id = payload["fornecedor_match"]["id"]
+        payload["resolved_supplier_id"] = forn_id
+        # Save alias for future auto-match (unless it came from an alias already)
+        learned = ""
+        if not payload["fornecedor_match"].get("from_alias"):
+            saved = aliases.save(_spreadsheet_id(), "FORNECEDOR", payload.get("fornecedor", ""), forn_id, service=service)
+            if saved:
+                learned = "\n📚 <i>Aprendi: dessa nota em diante, esse texto vira esse fornecedor automaticamente.</i>"
         tg.edit_message_text(
             chat_id, message_id,
-            f"✓ Fornecedor: <b>{_esc(payload['fornecedor_match']['nome'])}</b>",
+            f"✓ Fornecedor: <b>{_esc(payload['fornecedor_match']['nome'])}</b>{learned}",
             reply_markup=None,
         )
     elif action == "fcreate":  # fornecedor: create new
-        new_id = sheets.create_fornecedor(
-            _spreadsheet_id(), payload.get("fornecedor", "DESCONHECIDO"), service=service
-        )
+        nome = payload.get("fornecedor", "DESCONHECIDO")
+        new_id = sheets.create_fornecedor(_spreadsheet_id(), nome, service=service)
         payload["resolved_supplier_id"] = new_id
+        aliases.save(_spreadsheet_id(), "FORNECEDOR", nome, new_id, service=service)
         tg.edit_message_text(
             chat_id, message_id,
-            f"✓ Criei fornecedor <b>{new_id}</b> — {_esc(payload.get('fornecedor', ''))}",
+            f"✓ Criei fornecedor <b>{new_id}</b> — {_esc(nome)}\n"
+            f"📚 <i>Aprendi: dessa nota em diante, esse texto vira esse fornecedor.</i>",
             reply_markup=None,
         )
     elif action == "iuse":  # item: use suggestion
         idx = int(parts[2])
         item = payload["itens"][idx]
-        payload["items_resolved"][idx] = {
-            "action": "use", "produto_id": item["produto_match"]["id"],
-        }
+        produto_id = item["produto_match"]["id"]
+        payload["items_resolved"][idx] = {"action": "use", "produto_id": produto_id}
+        learned = ""
+        if not item["produto_match"].get("from_alias"):
+            saved = aliases.save(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), produto_id, service=service)
+            if saved:
+                learned = "\n📚 <i>Aprendi essa associação.</i>"
         tg.edit_message_text(
             chat_id, message_id,
-            f"✓ Item {idx+1}: <b>{_esc(item['produto_match']['nome'])}</b>",
+            f"✓ Item {idx+1}: <b>{_esc(item['produto_match']['nome'])}</b>{learned}",
             reply_markup=None,
         )
     elif action == "icreate":  # item: create new product
@@ -131,8 +159,7 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         item = payload["itens"][idx]
         categoria = item.get("categoria") or "ALI"
         if categoria == "OUTRO":
-            categoria = "ALI"  # fallback if Gemini was unsure
-        # unidade heuristic: if unidades_por_embalagem > 1, it's UN. Otherwise use generic UN.
+            categoria = "ALI"
         unidade = "UN"
         nome = item.get("descricao", "?")
         marca = item.get("marca")
@@ -141,9 +168,11 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             _spreadsheet_id(), full_nome, categoria, unidade=unidade, service=service
         )
         payload["items_resolved"][idx] = {"action": "create", "produto_id": new_id}
+        aliases.save(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), new_id, service=service)
         tg.edit_message_text(
             chat_id, message_id,
-            f"✓ Criei produto <b>{new_id}</b> — {_esc(full_nome)}",
+            f"✓ Criei produto <b>{new_id}</b> — {_esc(full_nome)}\n"
+            f"📚 <i>Aprendi essa associação.</i>",
             reply_markup=None,
         )
     elif action == "iskip":  # item: don't add
@@ -175,6 +204,18 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
     """Send the next prompt based on current state."""
     # 1. Resolve supplier
     if payload.get("resolved_supplier_id") is None:
+        # Auto-resolve if we have an alias-backed match (100% confidence, learned previously)
+        forn_match = payload.get("fornecedor_match")
+        if forn_match and forn_match.get("from_alias"):
+            payload["resolved_supplier_id"] = forn_match["id"]
+            tg.send_message(
+                chat_id,
+                f"🤖 Fornecedor reconhecido automaticamente: <b>{_esc(forn_match['nome'])}</b> (via memória)",
+            )
+            state.delete_state(_spreadsheet_id(), state_id, service=service)
+            new_id = state.save_state(_spreadsheet_id(), payload, service=service)
+            _next_step(chat_id, new_id, payload, service=service)
+            return
         _ask_supplier(chat_id, state_id, payload)
         return
 
@@ -183,11 +224,15 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
     resolved = payload.get("items_resolved", [])
     for idx, item in enumerate(itens):
         if resolved[idx] is None:
-            # Auto-resolve high-confidence matches
             prod = item.get("produto_match")
-            if prod and prod.get("match_confidence") == "alta":
+            # Auto-resolve if alias-backed OR high-confidence fuzzy match
+            if prod and (prod.get("from_alias") or prod.get("match_confidence") == "alta"):
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
-                # persist and continue without prompting
+                if prod.get("from_alias"):
+                    tg.send_message(
+                        chat_id,
+                        f"🤖 Item {idx+1} reconhecido: <b>{_esc(prod['nome'])}</b> (via memória)",
+                    )
                 state.delete_state(_spreadsheet_id(), state_id, service=service)
                 new_id = state.save_state(_spreadsheet_id(), payload, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
