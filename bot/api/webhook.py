@@ -58,11 +58,23 @@ def _process_update(update: dict) -> None:
                 "na planilha (aba Compras).\n\n"
                 "Comandos:\n"
                 "/start /help — esta mensagem\n"
-                "/whoami — mostra seu chat id",
+                "/whoami — mostra seu chat id\n"
+                "<code>incluir N</code> — re-revisar item N da última nota (caso tenha sido auto-ignorado)",
             )
         elif text.startswith("/whoami"):
             tg.send_message(chat_id, f"Seu chat_id: <code>{chat_id}</code>")
         else:
+            # Try to parse "incluir N" / "include N" / "+N"
+            import re
+            m = re.match(r"^(?:incluir|include|\+)\s*(\d+)\s*$", text, re.IGNORECASE)
+            if m:
+                try:
+                    from lib import orchestrator
+                    orchestrator.handle_include_command(chat_id, int(m.group(1)))
+                except Exception as e:
+                    tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+                    traceback.print_exc()
+                return
             tg.send_message(chat_id, "📸 Manda uma foto de nota fiscal pra eu processar.")
         return
 

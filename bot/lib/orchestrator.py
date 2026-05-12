@@ -68,7 +68,9 @@ def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
 
     for item in enriched.get("itens", []):
         item_alias_id = aliases.check(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), service=service)
-        if item_alias_id:
+        if item_alias_id == "SKIP":
+            item["alias_skip"] = True
+        elif item_alias_id:
             prod = next((p for p in produtos if p["id"] == item_alias_id), None)
             if prod:
                 item["produto_match"] = {**prod, "match_score": 100, "match_confidence": "alta", "from_alias": True}
@@ -79,7 +81,7 @@ def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
     enriched["resolved_supplier_id"] = None
     enriched["items_resolved"] = [None] * len(enriched.get("itens", []))
 
-    state_id = state.save_state(_spreadsheet_id(), enriched, service=service)
+    state_id = state.save_state(_spreadsheet_id(), enriched, chat_id=chat_id, service=service)
 
     # Send overview first
     tg.send_message(chat_id, _format_overview(enriched))
@@ -155,11 +157,16 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             reply_markup=None,
         )
     elif action == "icreate":  # item: create new product
+        # callback_data: icreate:state_id:idx[:categoria]
         idx = int(parts[2])
         item = payload["itens"][idx]
-        categoria = item.get("categoria") or "ALI"
-        if categoria == "OUTRO":
-            categoria = "ALI"
+        # Use explicit categoria from callback if present, else from Gemini, else default ALI
+        if len(parts) > 3 and parts[3] in ("ALI", "FOR", "EMB", "EQP", "OPR"):
+            categoria = parts[3]
+        else:
+            categoria = item.get("categoria") or "ALI"
+            if categoria == "OUTRO":
+                categoria = "ALI"  # safe fallback if user didn't disambiguate
         unidade = "UN"
         nome = item.get("descricao", "?")
         marca = item.get("marca")
@@ -177,11 +184,14 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         )
     elif action == "iskip":  # item: don't add
         idx = int(parts[2])
-        payload["items_resolved"][idx] = {"action": "skip"}
         item = payload["itens"][idx]
+        payload["items_resolved"][idx] = {"action": "skip"}
+        # Learn the skip so future receipts with same text auto-ignore
+        saved = aliases.save(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), "SKIP", service=service)
+        learned = "\n📚 <i>Aprendi: dessa nota em diante esse item é auto-ignorado.</i>" if saved else ""
         tg.edit_message_text(
             chat_id, message_id,
-            f"⏭ Item {idx+1} ignorado: <i>{_esc(item.get('descricao', '?'))}</i>",
+            f"⏭ Item {idx+1} ignorado: <i>{_esc(item.get('descricao', '?'))}</i>{learned}",
             reply_markup=None,
         )
     elif action == "save":  # final save
@@ -192,7 +202,7 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
 
     # Persist updated state and proceed
     state.delete_state(_spreadsheet_id(), state_id, service=service)
-    new_state_id = state.save_state(_spreadsheet_id(), payload, service=service)
+    new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
     _next_step(chat_id, new_state_id, payload, service=service)
 
 
@@ -213,7 +223,7 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
                 f"🤖 Fornecedor reconhecido automaticamente: <b>{_esc(forn_match['nome'])}</b> (via memória)",
             )
             state.delete_state(_spreadsheet_id(), state_id, service=service)
-            new_id = state.save_state(_spreadsheet_id(), payload, service=service)
+            new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
             _next_step(chat_id, new_id, payload, service=service)
             return
         _ask_supplier(chat_id, state_id, payload)
@@ -226,7 +236,19 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
         if resolved[idx] is None:
             prod = item.get("produto_match")
 
-            # Alias takes precedence over categoria — if learned, use it
+            # Alias-backed SKIP — user previously trained this text to be ignored
+            if item.get("alias_skip"):
+                payload["items_resolved"][idx] = {"action": "skip", "reason": "alias_skip"}
+                tg.send_message(
+                    chat_id,
+                    f"🤖 Item {idx+1} ignorado: <i>{_esc(item.get('descricao', '?'))}</i> (via memória)",
+                )
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+                _next_step(chat_id, new_id, payload, service=service)
+                return
+
+            # Alias-backed PRODUTO — auto-use the learned mapping
             if prod and prod.get("from_alias"):
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
                 tg.send_message(
@@ -234,15 +256,7 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
                     f"🤖 Item {idx+1} reconhecido: <b>{_esc(prod['nome'])}</b> (via memória)",
                 )
                 state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, service=service)
-                _next_step(chat_id, new_id, payload, service=service)
-                return
-
-            # Auto-skip items Gemini classified as not-an-insumo
-            if item.get("categoria") == "OUTRO":
-                payload["items_resolved"][idx] = {"action": "skip", "reason": "outro"}
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
@@ -250,7 +264,7 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
             if prod and prod.get("match_confidence") == "alta":
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
                 state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
@@ -292,6 +306,15 @@ def _ask_supplier(chat_id: int, state_id: str, payload: dict) -> None:
     tg.send_message_with_buttons(chat_id, text, buttons)
 
 
+CATEGORIA_LABEL = {
+    "ALI": "🍯 Alimento (entra na receita)",
+    "FOR": "🥣 Forma",
+    "EMB": "📦 Embalagem",
+    "EQP": "🔧 Equipamento (durável)",
+    "OPR": "🧻 Operacional (papel toalha, palito, etc.)",
+}
+
+
 def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
     item = payload["itens"][idx]
     prod = item.get("produto_match")
@@ -302,10 +325,13 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
     unid_e = item.get("unidades_por_embalagem", 1)
     preco = item.get("preco_total", 0)
     marca_str = f" • {_esc(marca)}" if marca else ""
+    is_outro = categoria == "OUTRO"
 
+    cat_hint = "🤔 <i>Parece não ser insumo do negócio</i>\n" if is_outro else ""
     info = (
         f"📦 <b>Item {idx + 1}/{len(payload['itens'])}</b>\n"
         f"<code>{_esc(desc)}</code>{marca_str}\n"
+        f"{cat_hint}"
         f"Categoria sugerida: <b>{_esc(categoria)}</b> · {qtd_e}×{unid_e} unid · R$ {preco:.2f}"
     )
 
@@ -322,17 +348,34 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
             [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
             [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
-    else:
+        tg.send_message_with_buttons(chat_id, text, buttons)
+        return
+
+    # No fuzzy match.
+    # For OUTRO: default is skip but offer to cadastrar with explicit categoria choice
+    if is_outro:
         text = (
             f"{info}\n\n"
-            f"Não achei produto parecido cadastrado. O que faço?"
+            f"Quer ignorar (default) ou cadastrar como produto?"
         )
         buttons = [
-            [{"text": "➕ Criar novo produto", "callback_data": f"icreate:{state_id}:{idx}"}],
-            [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
+            [{"text": "⏭ Pular (default)", "callback_data": f"iskip:{state_id}:{idx}"}],
+            [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['ALI']}", "callback_data": f"icreate:{state_id}:{idx}:ALI"}],
+            [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EMB']}", "callback_data": f"icreate:{state_id}:{idx}:EMB"}],
+            [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EQP']}", "callback_data": f"icreate:{state_id}:{idx}:EQP"}],
+            [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['OPR']}", "callback_data": f"icreate:{state_id}:{idx}:OPR"}],
             [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
+        tg.send_message_with_buttons(chat_id, text, buttons)
+        return
 
+    # Other categorias: just use the Gemini-suggested categoria when cadastrando
+    text = f"{info}\n\nNão achei produto parecido cadastrado. O que faço?"
+    buttons = [
+        [{"text": f"➕ Cadastrar como {categoria}", "callback_data": f"icreate:{state_id}:{idx}"}],
+        [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
+        [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
+    ]
     tg.send_message_with_buttons(chat_id, text, buttons)
 
 
@@ -421,23 +464,63 @@ def _format_overview(receipt: dict) -> str:
         forn_line = f"<b>Fornecedor:</b> ⚠️ <code>{_esc(receipt.get('fornecedor', '?'))}</code>"
 
     itens = receipt.get("itens", [])
-    outros = [it for it in itens if it.get("categoria") == "OUTRO" and not (it.get("produto_match") and it["produto_match"].get("from_alias"))]
-
     lines = [
         forn_line,
         f"<b>Data:</b> {_esc(receipt.get('data') or 'não detectada')}",
         f"<b>Total da nota:</b> R$ {receipt.get('total', 0):.2f}",
-        f"<b>Itens:</b> {len(itens)} total" + (f", {len(outros)} ignorado(s) (não-insumos)" if outros else ""),
+        "",
+        f"<b>Itens detectados ({len(itens)}):</b>",
     ]
-    if outros:
-        lines.append("")
-        lines.append("<b>Vou ignorar (não-insumos):</b>")
-        for it in outros:
-            lines.append(f"  ⏭ <s>{_esc(it.get('descricao', '?'))}</s> — R$ {it.get('preco_total', 0):.2f}")
+    for i, it in enumerate(itens, 1):
+        cat = it.get("categoria", "?")
+        marca = f" • {_esc(it['marca'])}" if it.get("marca") else ""
+        lines.append(f"  {i}. [{cat}] {_esc(it.get('descricao', '?'))}{marca} — R$ {it.get('preco_total', 0):.2f}")
+
     if receipt.get("observacoes"):
         lines.append("")
         lines.append(f"<i>{_esc(receipt['observacoes'])}</i>")
+    lines.append("")
+    lines.append("<i>Vou perguntar item por item. Se algo for auto-ignorado e você quiser incluir, mande: <code>incluir N</code></i>")
     return "\n".join(lines)
+
+
+def handle_include_command(chat_id: int, item_index_1based: int) -> bool:
+    """
+    Handle 'incluir N' text command — revert a previously skipped item back to review.
+
+    Returns True if the command was handled (state found and item revived), False otherwise.
+    """
+    service = sheets.get_service()
+    state_id = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    if not state_id:
+        tg.send_message(chat_id, "❌ Nenhuma nota ativa pra editar. Mande uma foto primeiro.")
+        return True
+
+    payload = state.load_state(_spreadsheet_id(), state_id, service=service)
+    if not payload:
+        tg.send_message(chat_id, "❌ Estado não encontrado.")
+        return True
+
+    itens = payload.get("itens", [])
+    if item_index_1based < 1 or item_index_1based > len(itens):
+        tg.send_message(chat_id, f"❌ Item {item_index_1based} não existe (a nota tem {len(itens)} itens).")
+        return True
+
+    idx = item_index_1based - 1
+    item = itens[idx]
+    # Clear the resolution to force re-review
+    payload["items_resolved"][idx] = None
+    # If there was an alias=SKIP, mark this item to bypass it this round
+    item.pop("alias_skip", None)
+    # Force going through ask_item even if categoria was OUTRO — override the auto-skip
+    # by setting a "force_review" flag and adjusting categoria handling
+    item["force_review"] = True
+
+    state.delete_state(_spreadsheet_id(), state_id, service=service)
+    new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+    tg.send_message(chat_id, f"🔄 Trazendo item {item_index_1based} de volta pra revisão...")
+    _next_step(chat_id, new_state_id, payload, service=service)
+    return True
 
 
 def _resolve_forn_name(forn_id: str) -> str:

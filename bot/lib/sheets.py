@@ -127,7 +127,7 @@ def create_produto(
     service=None,
 ) -> str:
     """Add a new produto row. Returns the new ID with category prefix."""
-    if categoria not in ("ALI", "FOR", "EMB", "EQP"):
+    if categoria not in ("ALI", "FOR", "EMB", "EQP", "OPR"):
         raise ValueError(f"Invalid categoria: {categoria}")
 
     service = service or get_service()
