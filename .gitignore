@@ -1,0 +1,23 @@
+# Generated files
+output/
+
+# OS files
+.DS_Store
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node (future bot)
+node_modules/
+.vercel/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Service account keys — NEVER commit
+service-account*.json
+*-credentials.json
