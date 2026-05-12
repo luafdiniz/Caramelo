@@ -148,7 +148,9 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         payload["items_resolved"][idx] = {"action": "use", "produto_id": produto_id}
         learned = ""
         if not item["produto_match"].get("from_alias"):
-            saved = aliases.save(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), produto_id, service=service)
+            # Save alias using ORIGINAL receipt text (in case user corrected via "ihint")
+            alias_text = item.get("original_descricao") or item.get("descricao", "")
+            saved = aliases.save(_spreadsheet_id(), "PRODUTO", alias_text, produto_id, service=service)
             if saved:
                 learned = "\n📚 <i>Aprendi essa associação.</i>"
         tg.edit_message_text(
@@ -175,7 +177,9 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             _spreadsheet_id(), full_nome, categoria, unidade=unidade, service=service
         )
         payload["items_resolved"][idx] = {"action": "create", "produto_id": new_id}
-        aliases.save(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), new_id, service=service)
+        # Save alias using ORIGINAL receipt text (so future receipts with same OCR match)
+        alias_text = item.get("original_descricao") or item.get("descricao", "")
+        aliases.save(_spreadsheet_id(), "PRODUTO", alias_text, new_id, service=service)
         tg.edit_message_text(
             chat_id, message_id,
             f"✓ Criei produto <b>{new_id}</b> — {_esc(full_nome)}\n"
@@ -192,6 +196,18 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         tg.edit_message_text(
             chat_id, message_id,
             f"⏭ Item {idx+1} ignorado: <i>{_esc(item.get('descricao', '?'))}</i>{learned}",
+            reply_markup=None,
+        )
+    elif action == "ihint":  # item: user wants to type a corrected name
+        idx = int(parts[2])
+        item = payload["itens"][idx]
+        # Save the ORIGINAL receipt text so we can save it as an alias later
+        item["original_descricao"] = item.get("original_descricao") or item.get("descricao", "")
+        payload["awaiting_text_for_item"] = idx
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"✏️ Digite o nome correto pro item {idx+1}\n"
+            f"(o que a nota mostra: <code>{_esc(item.get('descricao', '?'))}</code>)",
             reply_markup=None,
         )
     elif action == "save":  # final save
@@ -335,6 +351,8 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         f"Categoria sugerida: <b>{_esc(categoria)}</b> · {qtd_e}×{unid_e} unid · R$ {preco:.2f}"
     )
 
+    hint_button = [{"text": "✏️ Corrigir nome do item", "callback_data": f"ihint:{state_id}:{idx}"}]
+
     if prod:
         text = (
             f"{info}\n\n"
@@ -345,6 +363,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         buttons = [
             [{"text": f"✓ Usar {prod['id']}", "callback_data": f"iuse:{state_id}:{idx}"}],
             [{"text": "➕ Criar novo produto", "callback_data": f"icreate:{state_id}:{idx}"}],
+            hint_button,
             [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
             [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
@@ -364,6 +383,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EMB']}", "callback_data": f"icreate:{state_id}:{idx}:EMB"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EQP']}", "callback_data": f"icreate:{state_id}:{idx}:EQP"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['OPR']}", "callback_data": f"icreate:{state_id}:{idx}:OPR"}],
+            hint_button,
             [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
         tg.send_message_with_buttons(chat_id, text, buttons)
@@ -373,6 +393,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
     text = f"{info}\n\nNão achei produto parecido cadastrado. O que faço?"
     buttons = [
         [{"text": f"➕ Cadastrar como {categoria}", "callback_data": f"icreate:{state_id}:{idx}"}],
+        hint_button,
         [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
         [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
     ]
@@ -482,6 +503,44 @@ def _format_overview(receipt: dict) -> str:
     lines.append("")
     lines.append("<i>Vou perguntar item por item. Se algo for auto-ignorado e você quiser incluir, mande: <code>incluir N</code></i>")
     return "\n".join(lines)
+
+
+def handle_text_hint(chat_id: int, text: str) -> bool:
+    """
+    If there's an active state with awaiting_text_for_item set, treat the user's
+    text as the corrected description for that item. Re-runs matching with the
+    new descricao and goes back to _ask_item.
+
+    Returns True if the text was consumed as a hint, False otherwise.
+    """
+    service = sheets.get_service()
+    state_id = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    if not state_id:
+        return False
+    payload = state.load_state(_spreadsheet_id(), state_id, service=service)
+    if not payload or "awaiting_text_for_item" not in payload:
+        return False
+
+    idx = payload["awaiting_text_for_item"]
+    itens = payload.get("itens", [])
+    if idx is None or idx < 0 or idx >= len(itens):
+        del payload["awaiting_text_for_item"]
+        return False
+
+    item = itens[idx]
+    item["descricao"] = text.strip()
+    # Re-run matching with the new descricao
+    produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
+    item["produto_match"] = matcher.match_produto(item["descricao"], produtos)
+    # Clear any prior alias-skip flag
+    item.pop("alias_skip", None)
+    del payload["awaiting_text_for_item"]
+
+    state.delete_state(_spreadsheet_id(), state_id, service=service)
+    new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+    tg.send_message(chat_id, f"🔍 Buscando produto pra <b>{_esc(item['descricao'])}</b>...")
+    _ask_item(chat_id, new_state_id, payload, idx)
+    return True
 
 
 def handle_include_command(chat_id: int, item_index_1based: int) -> bool:

@@ -64,6 +64,16 @@ def _process_update(update: dict) -> None:
         elif text.startswith("/whoami"):
             tg.send_message(chat_id, f"Seu chat_id: <code>{chat_id}</code>")
         else:
+            # First, check if there's an active "awaiting text correction" state
+            # (user clicked "Corrigir nome" on an item review)
+            try:
+                if orchestrator.handle_text_hint(chat_id, text):
+                    return
+            except Exception as e:
+                tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+                traceback.print_exc()
+                return
+
             # Try to parse "incluir N" / "include N" / "+N"
             import re
             m = re.match(r"^(?:incluir|include|\+)\s*(\d+)\s*$", text, re.IGNORECASE)
