@@ -69,7 +69,6 @@ def _process_update(update: dict) -> None:
             m = re.match(r"^(?:incluir|include|\+)\s*(\d+)\s*$", text, re.IGNORECASE)
             if m:
                 try:
-                    from lib import orchestrator
                     orchestrator.handle_include_command(chat_id, int(m.group(1)))
                 except Exception as e:
                     tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
