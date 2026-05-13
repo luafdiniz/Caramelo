@@ -176,7 +176,28 @@ code {{
 }}
 
 [data-testid="stHeader"] {{
-    background-color: transparent !important;
+    background-color: rgba(255, 249, 240, 0.85) !important;
+    backdrop-filter: blur(4px);
+}}
+
+/* Make sure the Streamlit Cloud toolbar buttons (top right) stay visible */
+[data-testid="stHeader"] button,
+[data-testid="stHeader"] svg,
+[data-testid="stHeader"] a,
+[data-testid="stToolbar"] button,
+[data-testid="stToolbar"] svg,
+[data-testid="stToolbar"] a {{
+    color: {DARK_BROWN} !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    fill: {DARK_BROWN} !important;
+}}
+
+[data-testid="stHeader"] button:hover,
+[data-testid="stToolbar"] button:hover {{
+    color: {PURPLE} !important;
+    fill: {PURPLE} !important;
+    background-color: rgba(241, 227, 203, 0.4) !important;
 }}
 
 /* Main content area */

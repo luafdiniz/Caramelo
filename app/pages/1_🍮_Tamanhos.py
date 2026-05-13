@@ -215,6 +215,62 @@ with tab_list:
                                 import traceback
                                 st.code(traceback.format_exc())
 
+                    # --- Delete section (outside the edit form) ---
+                    st.divider()
+                    st.markdown("**🗑️ Deletar este tamanho**")
+                    confirm_key = f"confirm_del_tam_{row['id']}"
+                    if st.session_state.get(confirm_key):
+                        st.error(
+                            f"Confirma deletar **{row['id']} — {row['nome']}**? "
+                            "As embalagens vinculadas também serão removidas. Esta ação é irreversível."
+                        )
+                        cdc1, cdc2 = st.columns(2)
+                        with cdc1:
+                            if st.button("✅ Sim, deletar", key=f"do_del_tam_{row['id']}", type="primary"):
+                                try:
+                                    service = data.get_service()
+                                    ssid = data._spreadsheet_id()
+                                    # 1. Remove Tamanho row
+                                    row_num = data.find_row_by_id("Tamanhos", row["id"])
+                                    data.delete_row("Tamanhos", row_num)
+                                    # 2. Remove all Embalagens_Por_Tamanho rows for this tamanho
+                                    emb_all = service.spreadsheets().values().get(
+                                        spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
+                                    ).execute().get("values", [])
+                                    kept = [r for r in emb_all if r and r[0] != row["id"]]
+                                    service.spreadsheets().values().clear(
+                                        spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
+                                    ).execute()
+                                    if kept:
+                                        rewritten = []
+                                        for i, r in enumerate(kept):
+                                            rn = i + 2
+                                            rewritten.append([
+                                                r[0], r[1],
+                                                f"=VLOOKUP(B{rn};Produtos!A:B;2;FALSE)",
+                                                r[3] if len(r) > 3 else "",
+                                            ])
+                                        service.spreadsheets().values().update(
+                                            spreadsheetId=ssid,
+                                            range="Embalagens_Por_Tamanho!A2",
+                                            valueInputOption="USER_ENTERED",
+                                            body={"values": rewritten},
+                                        ).execute()
+                                    data.invalidate_cache()
+                                    del st.session_state[confirm_key]
+                                    st.success(f"✅ {row['id']} e suas embalagens foram removidos.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro: {e}")
+                        with cdc2:
+                            if st.button("❌ Cancelar", key=f"cancel_del_tam_{row['id']}"):
+                                del st.session_state[confirm_key]
+                                st.rerun()
+                    else:
+                        if st.button(f"🗑️ Deletar {row['id']}", key=f"req_del_tam_{row['id']}"):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
+
 
 # ---------------------------------------------------------------------------
 # New tamanho wizard

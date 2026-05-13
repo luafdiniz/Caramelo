@@ -62,6 +62,50 @@ def invalidate_cache():
     st.cache_data.clear()
 
 
+def get_sheet_id(sheet_name: str) -> int:
+    """Find the numeric sheetId for a tab by its title (needed for batchUpdate)."""
+    service = get_service()
+    meta = service.spreadsheets().get(spreadsheetId=_spreadsheet_id()).execute()
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == sheet_name:
+            return s["properties"]["sheetId"]
+    raise ValueError(f"Sheet {sheet_name!r} not found")
+
+
+def delete_row(sheet_name: str, row_num: int) -> None:
+    """Delete a single row (1-indexed) from the given sheet."""
+    service = get_service()
+    sheet_id = get_sheet_id(sheet_name)
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=_spreadsheet_id(),
+        body={
+            "requests": [{
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_num - 1,
+                        "endIndex": row_num,
+                    }
+                }
+            }]
+        },
+    ).execute()
+
+
+def find_row_by_id(sheet_name: str, item_id: str) -> int:
+    """Find the 1-indexed row number where column A == item_id."""
+    service = get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=_spreadsheet_id(), range=f"{sheet_name}!A:A"
+    ).execute()
+    rows = result.get("values", [])
+    for i, r in enumerate(rows):
+        if r and r[0] == item_id:
+            return i + 1
+    raise ValueError(f"{item_id} not found in {sheet_name}")
+
+
 # --- Cached reads ------------------------------------------------------------
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
