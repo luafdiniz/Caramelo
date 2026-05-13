@@ -76,7 +76,7 @@ with tab_new:
                 f"Custo unitário: <strong>{brl(t['custo_total'])}</strong>"
                 f" · Preço cadastrado: {preco_str}"
             )
-            card_title(t['nome'], badge=t['id'], meta=meta_str)
+            card_title(t['nome'], badge=t['id'], meta=meta_str, meta_is_html=True)
 
             c1, c2, c3, c4 = st.columns(4)
             with c1:

@@ -626,6 +626,25 @@ def brand_header(title: str, subtitle: str = "") -> None:
     )
 
 
+def _is_missing(value) -> bool:
+    """True for None, NaN, NaT, empty string, and pandas missing markers."""
+    if value is None:
+        return True
+    try:
+        import math
+        if isinstance(value, float) and math.isnan(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    try:
+        import pandas as _pd
+        if _pd.isna(value):
+            return True
+    except (TypeError, ValueError, ImportError):
+        pass
+    return False
+
+
 def brl(value) -> str:
     """
     Format a number as BRL currency. Handles None/NaN.
@@ -634,7 +653,7 @@ def brl(value) -> str:
     For markdown contexts (st.caption, st.markdown, f-strings in st.write),
     use brl_md() instead — Streamlit treats `$...$` as LaTeX math.
     """
-    if value is None:
+    if _is_missing(value):
         return "—"
     try:
         return f"R$ {float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -649,7 +668,7 @@ def brl_md(value) -> str:
 
 def pct(value) -> str:
     """Format a number as a percentage. Expects 0.10 for 10%."""
-    if value is None:
+    if _is_missing(value):
         return "—"
     try:
         return f"{float(value) * 100:.1f}%".replace(".", ",")
@@ -662,39 +681,56 @@ def kpi(label: str, value: str, help: str = None) -> None:
     st.metric(label, value, help=help)
 
 
-def _esc_attr(s: str) -> str:
-    return (s or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+def _esc_html(s) -> str:
+    """Escape user-controlled strings before injecting into HTML body."""
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
+def _esc_attr(s) -> str:
+    return _esc_html(s)
 
 
 def compact_kpi(label: str, value: str, suffix: str = "", help: str = "") -> None:
     """
     Smaller alternative to st.metric — half the height, same brand styling.
 
-    Use in list views where many KPI blocks share the screen.
+    All textual arguments are HTML-escaped before being injected into the markup,
+    so it's safe to pass user-controlled strings (e.g. produto names).
     """
-    suffix_html = f'<span class="ckpi-suffix">{suffix}</span>' if suffix else ""
+    suffix_html = f'<span class="ckpi-suffix">{_esc_html(suffix)}</span>' if suffix else ""
     title_attr = f' title="{_esc_attr(help)}"' if help else ""
     st.markdown(
         f'<div class="ckpi"{title_attr}>'
-        f'<span class="ckpi-label">{label}</span>'
-        f'<span class="ckpi-value">{value}{suffix_html}</span>'
+        f'<span class="ckpi-label">{_esc_html(label)}</span>'
+        f'<span class="ckpi-value">{_esc_html(value)}{suffix_html}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
 
-def card_title(title: str, badge: str = "", meta: str = "") -> None:
+def card_title(title: str, badge: str = "", meta: str = "", meta_is_html: bool = False) -> None:
     """
     Compact one-line card header: H4-sized title + optional code badge + meta caption.
 
-    Replaces patterns like `st.markdown("### Title")` + `st.caption(meta)` with a
-    single inline row about half the vertical space.
+    `title` and `badge` are always HTML-escaped (user-controlled data).
+    `meta` is escaped by default; set `meta_is_html=True` to allow inline
+    markup like <strong>...</strong> when the caller controls the content.
     """
-    badge_html = f'<code>{badge}</code>' if badge else ""
-    meta_html = f'<span class="ctitle-meta">{meta}</span>' if meta else ""
+    badge_html = f'<code>{_esc_html(badge)}</code>' if badge else ""
+    meta_safe = meta if meta_is_html else _esc_html(meta)
+    meta_html = f'<span class="ctitle-meta">{meta_safe}</span>' if meta else ""
     st.markdown(
         f'<div class="ctitle">'
-        f'<span class="ctitle-name">{title}</span>'
+        f'<span class="ctitle-name">{_esc_html(title)}</span>'
         f'{badge_html}{meta_html}'
         f'</div>',
         unsafe_allow_html=True,

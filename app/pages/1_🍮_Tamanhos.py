@@ -80,7 +80,7 @@ with tab_list:
                         )
                     with m2:
                         compact_kpi("Preço de venda", brl(row["preco_venda"]))
-                        if row["lucro"] is not None:
+                        if pd.notna(row.get("preco_venda")) and pd.notna(row.get("lucro")):
                             st.caption(f"Lucro {brl_md(row['lucro'])} · Margem {pct(row['margem'])}")
                         else:
                             st.caption("⚠️ Preço a definir")
