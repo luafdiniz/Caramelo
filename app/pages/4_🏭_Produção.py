@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, brl_md
+from lib.ui import setup_page, brl, brl_md, card_title, compact_kpi
 
 
 setup_page("Produção", icon="🏭")
@@ -71,11 +71,12 @@ with tab_new:
     rows_data = []
     for _, t in tamanhos.iterrows():
         with st.container(border=True):
-            st.markdown(f"#### {t['nome']} `({t['id']})`")
-            st.caption(
-                f"Custo unitário atual: **{brl_md(t['custo_total'])}** · "
-                f"Preço cadastrado: {brl_md(t['preco_venda']) if pd.notna(t['preco_venda']) else '—'}"
+            preco_str = brl_md(t['preco_venda']) if pd.notna(t['preco_venda']) else '—'
+            meta_str = (
+                f"Custo unitário: <strong>{brl_md(t['custo_total'])}</strong>"
+                f" · Preço cadastrado: {preco_str}"
             )
+            card_title(t['nome'], badge=t['id'], meta=meta_str)
 
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -145,15 +146,15 @@ with tab_new:
         st.markdown("### Resumo da fornada")
         s1, s2, s3, s4, s5 = st.columns(5)
         with s1:
-            st.metric("Total produzido", str(int(total_produzidos)))
+            compact_kpi("Total produzido", str(int(total_produzidos)))
         with s2:
-            st.metric("Vendidos", str(int(total_vendidos)))
+            compact_kpi("Vendidos", str(int(total_vendidos)))
         with s3:
-            st.metric("Cortesia", str(int(total_cortesia)))
+            compact_kpi("Cortesia", str(int(total_cortesia)))
         with s4:
-            st.metric("Teste/perda", str(int(total_teste)))
+            compact_kpi("Teste/perda", str(int(total_teste)))
         with s5:
-            st.metric("Lucro", brl(lucro_geral))
+            compact_kpi("Lucro", brl(lucro_geral))
 
         # Save
         if st.button("💾 Registrar fornada", type="primary", use_container_width=True):
@@ -292,4 +293,4 @@ with tab_list:
                         )
                 with col3:
                     if pd.notna(r["lucro"]):
-                        st.metric("Lucro", brl(r["lucro"]))
+                        compact_kpi("Lucro", brl(r["lucro"]))

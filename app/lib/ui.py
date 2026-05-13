@@ -308,6 +308,73 @@ code {{
     font-weight: 700 !important;
 }}
 
+/* Compact KPI block (smaller alternative to st.metric for tight list views).
+   Use via ui.compact_kpi(). */
+.ckpi {{
+    background-color: {CREAM};
+    border: 1px solid {CARAMEL_LIGHT};
+    border-radius: 10px;
+    padding: 6px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 0;
+    margin-bottom: 0;
+}}
+
+.ckpi-label {{
+    color: {CARAMEL} !important;
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.2 !important;
+}}
+
+.ckpi-value {{
+    color: {PURPLE_DARK} !important;
+    font-family: 'Fraunces', serif !important;
+    font-weight: 700 !important;
+    font-size: 1.15rem !important;
+    line-height: 1.3 !important;
+}}
+
+.ckpi-suffix {{
+    color: {CARAMEL} !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+    margin-left: 0.3rem;
+    font-family: 'Outfit', sans-serif !important;
+}}
+
+/* Compact card header: small title + badge + inline meta.
+   Use via ui.card_title(). */
+.ctitle {{
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0 0 0.25rem 0;
+}}
+
+.ctitle-name {{
+    font-family: 'Fraunces', serif !important;
+    color: {PURPLE_DARK} !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.2 !important;
+}}
+
+.ctitle-meta {{
+    color: {CARAMEL} !important;
+    font-size: 0.78rem !important;
+    font-weight: 500;
+}}
+
+.ctitle-meta strong {{ color: {PURPLE_DARK} !important; }}
+
 /* Bordered containers as "cards" */
 div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBlock"]) {{
     border-radius: 12px;
@@ -590,3 +657,42 @@ def pct(value) -> str:
 def kpi(label: str, value: str, help: str = None) -> None:
     """A metric card."""
     st.metric(label, value, help=help)
+
+
+def _esc_attr(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def compact_kpi(label: str, value: str, suffix: str = "", help: str = "") -> None:
+    """
+    Smaller alternative to st.metric — half the height, same brand styling.
+
+    Use in list views where many KPI blocks share the screen.
+    """
+    suffix_html = f'<span class="ckpi-suffix">{suffix}</span>' if suffix else ""
+    title_attr = f' title="{_esc_attr(help)}"' if help else ""
+    st.markdown(
+        f'<div class="ckpi"{title_attr}>'
+        f'<span class="ckpi-label">{label}</span>'
+        f'<span class="ckpi-value">{value}{suffix_html}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def card_title(title: str, badge: str = "", meta: str = "") -> None:
+    """
+    Compact one-line card header: H4-sized title + optional code badge + meta caption.
+
+    Replaces patterns like `st.markdown("### Title")` + `st.caption(meta)` with a
+    single inline row about half the vertical space.
+    """
+    badge_html = f'<code>{badge}</code>' if badge else ""
+    meta_html = f'<span class="ctitle-meta">{meta}</span>' if meta else ""
+    st.markdown(
+        f'<div class="ctitle">'
+        f'<span class="ctitle-name">{title}</span>'
+        f'{badge_html}{meta_html}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )

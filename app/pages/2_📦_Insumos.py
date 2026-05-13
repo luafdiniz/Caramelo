@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, brl_md
+from lib.ui import setup_page, brl, brl_md, compact_kpi, card_title
 
 
 setup_page("Insumos", icon="📦")
@@ -122,21 +122,25 @@ with tab_list:
     for _, p in filtered.iterrows():
         emoji = CAT_EMOJI.get(p["categoria"], "•")
         with st.container(border=True):
-            head_col1, head_col2, head_col3 = st.columns([3, 2, 2])
+            head_col1, head_col2, head_col3 = st.columns([4, 2, 2])
             with head_col1:
-                st.markdown(f"### {emoji} {p['nome']}")
-                st.caption(f"`{p['id']}` · {p['categoria']} · unidade: {p['unidade']}")
+                meta = f"{p['categoria']} · {p['unidade']}"
                 if p.get("notas"):
-                    st.caption(f"📝 {p['notas']}")
+                    meta += f" · 📝 {p['notas']}"
+                card_title(f"{emoji} {p['nome']}", badge=p["id"], meta=meta)
             with head_col2:
                 ultima = p.get("ultima_data")
-                help_text = (
-                    f"Última compra: {ultima.strftime('%d/%m/%Y')}"
-                    if ultima is not None and pd.notna(ultima) else "Sem compras"
+                ultima_str = (
+                    ultima.strftime('%d/%m/%Y')
+                    if ultima is not None and pd.notna(ultima) else "—"
                 )
-                st.metric("Preço unitário atual", brl(p["preco_atual"]), help=help_text)
+                compact_kpi(
+                    "Preço atual",
+                    brl(p["preco_atual"]),
+                    help=f"Última compra: {ultima_str}",
+                )
             with head_col3:
-                st.metric("Compras registradas", str(int(p["n_compras"])))
+                compact_kpi("Compras", str(int(p["n_compras"])))
 
             # Detail expander: history + edit + delete
             with st.expander("📊 Histórico, edição e gestão"):
@@ -147,11 +151,11 @@ with tab_list:
 
                     k1, k2, k3 = st.columns(3)
                     with k1:
-                        st.metric("Menor preço histórico", brl(p["menor"]))
+                        compact_kpi("Menor preço", brl(p["menor"]))
                     with k2:
-                        st.metric("Preço médio", brl(p["media"]))
+                        compact_kpi("Preço médio", brl(p["media"]))
                     with k3:
-                        st.metric("Maior preço histórico", brl(p["maior"]))
+                        compact_kpi("Maior preço", brl(p["maior"]))
 
                     if len(sub) > 1:
                         st.markdown("**Evolução do preço unitário**")
