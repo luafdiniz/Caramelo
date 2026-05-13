@@ -1,4 +1,7 @@
-"""Reusable Streamlit UI helpers."""
+"""Reusable Streamlit UI helpers.
+
+Schema version 2: adds compact_kpi() and card_title() (2026-05-13).
+"""
 
 import streamlit as st
 
