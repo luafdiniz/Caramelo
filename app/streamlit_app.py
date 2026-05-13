@@ -9,14 +9,13 @@ import pandas as pd
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, kpi
+from lib.ui import setup_page, brl, kpi, brand_header
 
 
 setup_page("Painel")
 require_auth()
 
-st.title("🍮 Pudim Caramelo")
-st.caption("Painel de controle do negócio.")
+brand_header("Pudim Caramelo", "gostoso demais 🍯")
 
 # Top KPIs
 col1, col2, col3, col4 = st.columns(4)

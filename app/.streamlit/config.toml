@@ -1,9 +1,10 @@
 [theme]
-primaryColor = "#C97A47"
-backgroundColor = "#FFFBF5"
-secondaryBackgroundColor = "#F5E8D8"
-textColor = "#3D2914"
-font = "sans serif"
+# Brand palette: deep purple primary, warm cream background, caramel accent
+primaryColor = "#5C2D7A"
+backgroundColor = "#FFF9F0"
+secondaryBackgroundColor = "#F1E3CB"
+textColor = "#2D1810"
+font = "serif"
 
 [server]
 headless = true
