@@ -278,25 +278,52 @@ div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBloc
     color: {CREAM} !important;
 }}
 
-/* Dataframes — force light theme */
+/* Dataframes (canvas-rendered) */
 [data-testid="stDataFrame"] {{
     border-radius: 12px;
     overflow: hidden;
     border: 1px solid {CARAMEL_LIGHT};
 }}
 
-[data-testid="stDataFrame"] * {{
-    color: {DARK_BROWN} !important;
+/* st.table (static HTML table) — force readable colors */
+[data-testid="stTable"] {{
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid {CARAMEL_LIGHT};
+    background-color: {CREAM} !important;
 }}
 
-[data-testid="stDataFrame"] [role="columnheader"] {{
+[data-testid="stTable"] table {{
+    background-color: {CREAM} !important;
+    border-collapse: separate !important;
+}}
+
+[data-testid="stTable"] th,
+[data-testid="stTable"] thead th {{
     background-color: {BEIGE} !important;
     color: {PURPLE_DARK} !important;
     font-weight: 700 !important;
+    text-align: left !important;
+    padding: 10px 14px !important;
 }}
 
-[data-testid="stDataFrame"] [role="row"]:nth-child(even) {{
-    background-color: rgba(241, 227, 203, 0.3) !important;
+[data-testid="stTable"] td {{
+    background-color: {CREAM} !important;
+    color: {DARK_BROWN} !important;
+    padding: 8px 14px !important;
+    border-top: 1px solid rgba(176, 120, 66, 0.15) !important;
+}}
+
+[data-testid="stTable"] tr:nth-child(even) td {{
+    background-color: rgba(241, 227, 203, 0.35) !important;
+}}
+
+[data-testid="stTable"] * {{
+    color: {DARK_BROWN} !important;
+}}
+
+[data-testid="stTable"] th * {{
+    color: {PURPLE_DARK} !important;
 }}
 
 /* Info / warning / success boxes — force readable text */
