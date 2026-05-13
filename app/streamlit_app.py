@@ -53,13 +53,13 @@ st.divider()
 st.subheader("Acessar")
 nav_col1, nav_col2, nav_col3 = st.columns(3)
 with nav_col1:
-    st.page_link("pages/1_🍮_Tamanhos.py", label="🍮 Tamanhos", icon="➡️")
-    st.page_link("pages/2_📦_Insumos.py", label="📦 Insumos", icon="➡️")
+    st.page_link("pages/1_🍮_Tamanhos.py", label="🍮 Tamanhos")
+    st.page_link("pages/2_📦_Insumos.py", label="📦 Insumos")
 with nav_col2:
-    st.page_link("pages/3_🧮_Calculadora.py", label="🧮 Calculadora", icon="➡️")
-    st.page_link("pages/4_🏭_Produção.py", label="🏭 Produção", icon="➡️")
+    st.page_link("pages/3_🧮_Calculadora.py", label="🧮 Calculadora")
+    st.page_link("pages/4_🏭_Produção.py", label="🏭 Produção")
 with nav_col3:
-    st.page_link("pages/5_🛒_Compras.py", label="🛒 Compras", icon="➡️")
+    st.page_link("pages/5_🛒_Compras.py", label="🛒 Compras")
 
 
 # Latest activity

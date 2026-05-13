@@ -210,16 +210,53 @@ div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBloc
     color: {DARK_BROWN} !important;
 }}
 
-/* Page links in main area — force dark text */
-[data-testid="stPageLink"] a, a[data-testid="stPageLink-NavLink"] {{
+/* Page links in main area — force ALL nested text to brand purple */
+[data-testid="stPageLink"],
+[data-testid="stPageLink"] *,
+[data-testid="stPageLink"] a,
+[data-testid="stPageLink"] a *,
+[data-testid="stPageLink"] span,
+[data-testid="stPageLink"] p,
+[data-testid="stPageLink"] div {{
     color: {PURPLE} !important;
     font-weight: 600 !important;
+}}
+
+[data-testid="stPageLink"] {{
+    background-color: rgba(241, 227, 203, 0.4) !important;
+    border-radius: 10px !important;
+    padding: 4px 12px !important;
+    margin: 4px 0 !important;
+    border-left: 3px solid {CARAMEL} !important;
+}}
+
+[data-testid="stPageLink"]:hover {{
+    background-color: rgba(176, 120, 66, 0.18) !important;
+}}
+
+[data-testid="stPageLink"] a {{
     text-decoration: none !important;
 }}
 
-[data-testid="stPageLink"] a:hover {{
+/* Sidebar nav links — force dark brown */
+[data-testid="stSidebarNav"],
+[data-testid="stSidebarNav"] *,
+[data-testid="stSidebarNav"] a,
+[data-testid="stSidebarNav"] a *,
+[data-testid="stSidebarNav"] span,
+section[data-testid="stSidebar"] a,
+section[data-testid="stSidebar"] a *,
+section[data-testid="stSidebar"] span {{
+    color: {DARK_BROWN} !important;
+    font-weight: 600 !important;
+}}
+
+section[data-testid="stSidebar"] a {{
+    text-decoration: none !important;
+}}
+
+section[data-testid="stSidebar"] a:hover {{
     color: {PURPLE_DARK} !important;
-    text-decoration: underline !important;
 }}
 
 /* Plain links */
