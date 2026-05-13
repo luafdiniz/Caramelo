@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, pct
+from lib.ui import setup_page, brl, pct, compact_kpi
 
 
 setup_page("Calculadora", icon="🧮")
@@ -40,23 +40,23 @@ preco_atual = float(preco_atual) if pd.notna(preco_atual) else None
 # KPIs
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.metric("Custo alimento", brl(custo_ali))
+    compact_kpi("Custo alimento", brl(custo_ali))
 with k2:
-    st.metric("Custo embalagem", brl(custo_emb))
+    compact_kpi("Custo embalagem", brl(custo_emb))
 with k3:
-    st.metric("Custo total/unid", brl(custo_total))
+    compact_kpi("Custo total/unid", brl(custo_total))
 with k4:
     if preco_atual:
         lucro = preco_atual - custo_total
         margem = lucro / preco_atual if preco_atual > 0 else 0
-        st.metric("Margem atual", pct(margem), help=f"Lucro: {brl(lucro)}")
+        compact_kpi("Margem atual", pct(margem), help=f"Lucro: {brl(lucro)}")
     else:
-        st.metric("Margem atual", "—", help="Preço não definido")
+        compact_kpi("Margem atual", "—", help="Preço não definido")
 
 st.divider()
 
 # --- Simulador 1: preço por margem desejada ---
-st.subheader("Simulação 1 — qual preço pra cada margem")
+st.markdown("#### Simulação 1 — qual preço pra cada margem")
 
 margens = [10, 20, 30, 40, 50, 60, 70, 80]
 rows1 = []
@@ -72,17 +72,21 @@ st.dataframe(pd.DataFrame(rows1), hide_index=True, use_container_width=True)
 
 
 # --- Simulador 2: margem por preço fixado ---
-st.subheader("Simulação 2 — margem em diferentes preços")
+st.markdown("#### Simulação 2 — margem em diferentes preços")
 
-preco_min = float(st.number_input(
-    "Preço mínimo a simular (R$)",
-    min_value=0.0, value=float(round(custo_total)), step=5.0,
-))
-preco_max = float(st.number_input(
-    "Preço máximo a simular (R$)",
-    min_value=preco_min, value=preco_min + 60, step=5.0,
-))
-step = float(st.number_input("Passo (R$)", min_value=1.0, value=5.0, step=1.0))
+sim_c1, sim_c2, sim_c3 = st.columns(3)
+with sim_c1:
+    preco_min = float(st.number_input(
+        "Preço mínimo (R$)",
+        min_value=0.0, value=float(round(custo_total)), step=5.0,
+    ))
+with sim_c2:
+    preco_max = float(st.number_input(
+        "Preço máximo (R$)",
+        min_value=preco_min, value=preco_min + 60, step=5.0,
+    ))
+with sim_c3:
+    step = float(st.number_input("Passo (R$)", min_value=1.0, value=5.0, step=1.0))
 
 rows2 = []
 p = preco_min
@@ -100,7 +104,7 @@ st.dataframe(pd.DataFrame(rows2), hide_index=True, use_container_width=True)
 
 # --- Quick action: salvar preço ---
 st.divider()
-st.subheader("Salvar preço de venda")
+st.markdown("#### Salvar preço de venda")
 st.caption("Atualiza o preço de venda deste tamanho na planilha (campo Preco_Venda).")
 
 new_price = st.number_input(

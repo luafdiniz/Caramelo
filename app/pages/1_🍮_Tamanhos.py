@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, brl_md, pct
+from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title
 
 
 setup_page("Tamanhos")
@@ -62,27 +62,24 @@ with tab_list:
                 col1, col2 = st.columns([3, 2])
 
                 with col1:
-                    st.markdown(f"### {row['nome']}")
-                    st.caption(f"`{row['id']}` · {row['canal']}")
-                    info_bits = []
+                    info_bits = [row["canal"]]
                     if pd.notna(row.get("peso_kg")):
                         info_bits.append(f"{row['peso_kg']:.2f} kg")
                     if pd.notna(row.get("volume_ml")):
                         info_bits.append(f"{int(row['volume_ml'])} ml")
                     if pd.notna(row.get("rendimento")):
                         info_bits.append(f"Rendimento {int(row['rendimento'])}/receita")
-                    if info_bits:
-                        st.caption(" · ".join(info_bits))
+                    card_title(row["nome"], badge=row["id"], meta=" · ".join(info_bits))
 
                 with col2:
                     m1, m2 = st.columns(2)
                     with m1:
-                        st.metric("Custo unitário", brl(row["custo_total"]))
+                        compact_kpi("Custo unitário", brl(row["custo_total"]))
                         st.caption(
                             f"Alimento {brl_md(row['custo_alimento'])} + Embalagem {brl_md(row['custo_embalagem'])}"
                         )
                     with m2:
-                        st.metric("Preço de venda", brl(row["preco_venda"]))
+                        compact_kpi("Preço de venda", brl(row["preco_venda"]))
                         if row["lucro"] is not None:
                             st.caption(f"Lucro {brl_md(row['lucro'])} · Margem {pct(row['margem'])}")
                         else:
