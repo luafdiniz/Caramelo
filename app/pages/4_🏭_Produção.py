@@ -251,7 +251,27 @@ with tab_list:
 
         st.divider()
         st.markdown("### Histórico detalhado")
-        disp = fornadas.sort_values("data_inicio", ascending=False).copy()
+
+        # Sort controls
+        sort_col, dir_col = st.columns([3, 1])
+        with sort_col:
+            sort_by = st.selectbox(
+                "Ordenar por",
+                ["Data (mais recente)", "Lucro", "Receita", "Qtde produzida", "Qtde vendida"],
+                index=0,
+                key="forn_sort",
+            )
+        with dir_col:
+            asc = st.selectbox("Direção", ["Crescente ↑", "Decrescente ↓"], index=1, key="forn_dir") == "Crescente ↑"
+
+        sort_map = {
+            "Data (mais recente)": "data_inicio",
+            "Lucro": "lucro",
+            "Receita": "receita_total",
+            "Qtde produzida": "qtde_produzida",
+            "Qtde vendida": "qtde_vendida",
+        }
+        disp = fornadas.sort_values(sort_map[sort_by], ascending=asc, na_position="last").copy()
         disp["data_inicio_str"] = disp["data_inicio"].dt.strftime("%d/%m/%Y")
         for _, r in disp.iterrows():
             with st.container(border=True):

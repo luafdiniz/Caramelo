@@ -36,6 +36,26 @@ with tab_list:
     if df.empty:
         st.info("Nenhum tamanho cadastrado ainda.")
     else:
+        # Sort controls
+        sort_col, dir_col = st.columns([3, 1])
+        with sort_col:
+            sort_by = st.selectbox(
+                "Ordenar por",
+                ["Nome (A-Z)", "Peso (kg)", "Custo unitário", "Preço de venda", "Margem", "Lucro/unid"],
+                index=0,
+            )
+        with dir_col:
+            asc = st.selectbox("Direção", ["Crescente ↑", "Decrescente ↓"], index=0) == "Crescente ↑"
+
+        sort_map = {
+            "Nome (A-Z)": "nome",
+            "Peso (kg)": "peso_kg",
+            "Custo unitário": "custo_total",
+            "Preço de venda": "preco_venda",
+            "Margem": "margem",
+            "Lucro/unid": "lucro",
+        }
+        df = df.sort_values(sort_map[sort_by], ascending=asc, na_position="last")
         # Render as expandable cards
         for _, row in df.iterrows():
             with st.container(border=True):

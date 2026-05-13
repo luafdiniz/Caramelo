@@ -86,6 +86,28 @@ with tab_list:
             default=categorias_disponiveis,
         )
 
+    # Sort controls
+    sort_col, dir_col = st.columns([3, 1])
+    with sort_col:
+        sort_by = st.selectbox(
+            "Ordenar por",
+            ["Nome (A-Z)", "ID", "Categoria", "Preço atual", "Menor preço", "Maior preço", "Nº compras", "Última compra"],
+            index=0,
+        )
+    with dir_col:
+        asc = st.selectbox("Direção", ["Crescente ↑", "Decrescente ↓"], index=0, key="ins_dir") == "Crescente ↑"
+
+    sort_map = {
+        "Nome (A-Z)": "nome",
+        "ID": "id",
+        "Categoria": "categoria",
+        "Preço atual": "preco_atual",
+        "Menor preço": "menor",
+        "Maior preço": "maior",
+        "Nº compras": "n_compras",
+        "Última compra": "ultima_data",
+    }
+
     filtered = prods_enriched[prods_enriched["categoria"].isin(cat_filter)]
     if search:
         s = search.lower()
@@ -93,6 +115,7 @@ with tab_list:
             filtered["id"].str.lower().str.contains(s)
             | filtered["nome"].str.lower().str.contains(s)
         ]
+    filtered = filtered.sort_values(sort_map[sort_by], ascending=asc, na_position="last")
 
     st.caption(f"{len(filtered)} de {len(prods_enriched)} insumos")
 

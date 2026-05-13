@@ -132,7 +132,32 @@ if cat_filter:
 if forn_filter:
     filtered = filtered[filtered["fornecedor_nome"].isin(forn_filter) | filtered["fornecedor_nome"].isna()]
 
-filtered = filtered.sort_values("data", ascending=False)
+# Sort controls
+sort_col, dir_col = st.columns([3, 1])
+with sort_col:
+    sort_by = st.selectbox(
+        "Ordenar por",
+        ["Data (mais recente)", "Preço total", "Preço unitário", "Produto", "Fornecedor", "ID"],
+        index=0,
+    )
+with dir_col:
+    default_asc = sort_by == "Produto" or sort_by == "Fornecedor" or sort_by == "ID"
+    asc = st.selectbox(
+        "Direção",
+        ["Crescente ↑", "Decrescente ↓"],
+        index=0 if default_asc else 1,
+        key="compras_dir",
+    ) == "Crescente ↑"
+
+sort_map = {
+    "Data (mais recente)": "data",
+    "Preço total": "preco_total",
+    "Preço unitário": "preco_unitario",
+    "Produto": "produto_nome",
+    "Fornecedor": "fornecedor_nome",
+    "ID": "id",
+}
+filtered = filtered.sort_values(sort_map[sort_by], ascending=asc, na_position="last")
 
 st.caption(f"Mostrando {len(filtered)} compra(s). Total: **{brl(filtered['preco_total'].sum())}**")
 
