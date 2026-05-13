@@ -62,12 +62,22 @@ h2 {{
     font-weight: 500 !important;
 }}
 
-/* Subtle wavy background — evokes brand swirls without being noisy */
-[data-testid="stAppViewContainer"] {{
+/* Force cream background and wavy texture — overrides dark mode preference */
+.stApp, [data-testid="stAppViewContainer"] {{
+    background-color: {CREAM} !important;
     background-image: url("{_WAVE_SVG}");
     background-repeat: repeat;
     background-size: 600px auto;
     background-attachment: fixed;
+}}
+
+[data-testid="stHeader"] {{
+    background-color: transparent !important;
+}}
+
+/* Main content area */
+.main, [data-testid="block-container"] {{
+    background-color: transparent !important;
 }}
 
 /* Top decorative bar */
