@@ -14,19 +14,25 @@ Data labels, product names, and user-facing content are in Portuguese (the busin
 
 ## Current State
 
-**Stage 1 (Data Foundation): DONE** — Google Sheets at `1hV9zTIMyX3wlULkWAYN_-nBeNeM6adfL0Zz6MIvwFXE` has all 12 tabs populated, formulas working, formatting applied. Created via GWS CLI on 2026-04-10.
+All stages **DONE and deployed** as of 2026-05-12.
 
-**Stage 5 (Bot — fast-tracked): IN PROGRESS** — Code written in `bot/`, awaiting user setup of Telegram bot, Gemini API key, GCP service account, and Vercel deploy. See `bot/SETUP.md`.
+**Live services:**
+- 🤖 Telegram bot: `@pudim_caramelo_bot` → `https://caramelo-pi.vercel.app/api/webhook`
+- 📊 Streamlit dashboard: `https://caramelo-do-fila.streamlit.app`
+- 📑 Google Sheet (source of truth): `1hV9zTIMyX3wlULkWAYN_-nBeNeM6adfL0Zz6MIvwFXE`
 
-Stages 2-4 were deprioritized; the bot replaces "Stage 2: Easy Purchase Logging" directly.
+Repo is **PUBLIC** on GitHub (`luafdiniz/Caramelo`). Audited — no secrets committed.
+
+For the latest session handoff including pending TODOs and gotchas, see `plans/session-2026-05-12.md`.
 
 ### Stages roadmap
 
-1. **Data Foundation** ✅ — Google Sheets structure (Produtos, Fornecedores, Compras, etc.)
+1. **Data Foundation** ✅ — Google Sheets structure
 2. ~~Easy Purchase Logging via Form~~ — superseded by bot
-3. **Pricing Calculator** ✅ — done as part of Stage 1
-4. **Batch Management & Cash Flow** — basic version done in Stage 1; richer reports TBD
-5. **Bot Integration (Telegram)** 🚧 — receipt photo → Gemini Vision → Sheets
+3. **Pricing Calculator** ✅ — sheet + app
+4. **Batch Management & Cash Flow** ✅ — basic done, registro de fornadas no app
+5. **Bot Integration (Telegram)** ✅ — receipt photo → Gemini Vision → Sheets, with alias learning
+6. **Web Dashboard (Streamlit)** ✅ — full CRUD with brand styling
 
 ## Architecture
 
