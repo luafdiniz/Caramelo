@@ -5,15 +5,20 @@ Interactive flow:
 1. Photo arrives → Gemini parses → matcher enriches
 2. If fornecedor doesn't match, ask: [Use sugestão] [Criar novo] [Cancelar]
 3. For each unmatched item, ask: [Use sugestão] [Criar novo] [Pular]
-4. After all resolved, write to Compras and confirm
+4. For each kept item, ask pack size (units per receipt line) — learned via alias
+5. After all resolved, write to Compras and confirm
 
 State is kept in the hidden _BotState tab. Keys we use in the state dict:
 - "fornecedor", "data", "total", "itens", "observacoes"  (raw from Gemini)
 - "fornecedor_match" (best match or None)
-- "step": "review_supplier" | "review_item" | "ready_save" | "done"
 - "current_item_index": index of the item currently being reviewed
 - "resolved_supplier_id": final FORN-NNN to use
-- "items_resolved": list parallel to "itens" with {"action": "use"|"create"|"skip", "produto_id": "..."}
+- "items_resolved": list parallel to "itens"; each entry is one of:
+    - None (not yet resolved)
+    - {"action": "skip", ...}
+    - {"action": "use" | "create", "produto_id": "...", "pack_size": int}
+  Until pack_size is set, "pack_size" key is absent.
+- "awaiting_text_for_item" / "awaiting_pack_size_for_item": int idx when waiting on text input
 """
 
 import os
@@ -38,6 +43,10 @@ def _esc(s) -> str:
 CONFIDENCE_EMOJI = {"alta": "✅", "media": "⚠️", "baixa": "❓"}
 
 
+# Pack-size presets shown as quick buttons. "custom" opens a free-text prompt.
+PACK_SIZE_PRESETS = [1, 5, 10, 12, 24, 30]
+
+
 # ============================================================================
 # Photo handler — entrypoint
 # ============================================================================
@@ -59,24 +68,30 @@ def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
 
     # Apply alias memory BEFORE fuzzy match consideration:
     # if there's a saved alias for this exact text, use it (auto-resolve)
-    sup_alias_id = aliases.check(_spreadsheet_id(), "FORNECEDOR", enriched.get("fornecedor", ""), service=service)
-    if sup_alias_id:
-        # Validate the alias still points to an existing fornecedor
-        forn = next((f for f in fornecedores if f["id"] == sup_alias_id), None)
+    sup_alias = aliases.get_alias(_spreadsheet_id(), "FORNECEDOR", enriched.get("fornecedor", ""), service=service)
+    if sup_alias:
+        forn = next((f for f in fornecedores if f["id"] == sup_alias["resolved_id"]), None)
         if forn:
             enriched["fornecedor_match"] = {**forn, "match_score": 100, "match_confidence": "alta", "from_alias": True}
 
     for item in enriched.get("itens", []):
-        item_alias_id = aliases.check(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), service=service)
-        if item_alias_id == "SKIP":
-            item["alias_skip"] = True
-        elif item_alias_id:
-            prod = next((p for p in produtos if p["id"] == item_alias_id), None)
-            if prod:
-                item["produto_match"] = {**prod, "match_score": 100, "match_confidence": "alta", "from_alias": True}
+        item_alias = aliases.get_alias(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), service=service)
+        if item_alias:
+            if item_alias["resolved_id"] == "SKIP":
+                item["alias_skip"] = True
+            else:
+                prod = next((p for p in produtos if p["id"] == item_alias["resolved_id"]), None)
+                if prod:
+                    item["produto_match"] = {
+                        **prod,
+                        "match_score": 100,
+                        "match_confidence": "alta",
+                        "from_alias": True,
+                    }
+                    if item_alias.get("pack_size"):
+                        item["alias_pack_size"] = item_alias["pack_size"]
 
     # Initialize state
-    enriched["step"] = "review_supplier"
     enriched["current_item_index"] = 0
     enriched["resolved_supplier_id"] = None
     enriched["items_resolved"] = [None] * len(enriched.get("itens", []))
@@ -145,7 +160,6 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         ]
         list_buttons.append([{"text": "← Voltar", "callback_data": f"fback:{state_id}"}])
         # Edit current message instead of creating new
-        from . import telegram_client as _tg
         import requests as _req
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         _req.post(
@@ -177,10 +191,8 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             reply_markup=None,
         )
     elif action == "fback":  # back to fornecedor question
-        # Re-show the supplier question
         state.delete_state(_spreadsheet_id(), state_id, service=service)
         new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
-        # Delete the current list message and ask again
         tg.edit_message_text(chat_id, message_id, "↩️ Voltando...", reply_markup=None)
         _ask_supplier(chat_id, new_state_id, payload)
         return
@@ -202,7 +214,6 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         payload["items_resolved"][idx] = {"action": "use", "produto_id": produto_id}
         learned = ""
         if not item["produto_match"].get("from_alias"):
-            # Save alias using ORIGINAL receipt text (in case user corrected via "ihint")
             alias_text = item.get("original_descricao") or item.get("descricao", "")
             saved = aliases.save(_spreadsheet_id(), "PRODUTO", alias_text, produto_id, service=service)
             if saved:
@@ -213,16 +224,14 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             reply_markup=None,
         )
     elif action == "icreate":  # item: create new product
-        # callback_data: icreate:state_id:idx[:categoria]
         idx = int(parts[2])
         item = payload["itens"][idx]
-        # Use explicit categoria from callback if present, else from Gemini, else default ALI
         if len(parts) > 3 and parts[3] in ("ALI", "FOR", "EMB", "EQP", "OPR"):
             categoria = parts[3]
         else:
             categoria = item.get("categoria") or "ALI"
             if categoria == "OUTRO":
-                categoria = "ALI"  # safe fallback if user didn't disambiguate
+                categoria = "ALI"
         unidade = "UN"
         nome = item.get("descricao", "?")
         marca = item.get("marca")
@@ -231,7 +240,6 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             _spreadsheet_id(), full_nome, categoria, unidade=unidade, service=service
         )
         payload["items_resolved"][idx] = {"action": "create", "produto_id": new_id}
-        # Save alias using ORIGINAL receipt text (so future receipts with same OCR match)
         alias_text = item.get("original_descricao") or item.get("descricao", "")
         aliases.save(_spreadsheet_id(), "PRODUTO", alias_text, new_id, service=service)
         tg.edit_message_text(
@@ -244,7 +252,6 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         idx = int(parts[2])
         item = payload["itens"][idx]
         payload["items_resolved"][idx] = {"action": "skip"}
-        # Learn the skip so future receipts with same text auto-ignore
         saved = aliases.save(_spreadsheet_id(), "PRODUTO", item.get("descricao", ""), "SKIP", service=service)
         learned = "\n📚 <i>Aprendi: dessa nota em diante esse item é auto-ignorado.</i>" if saved else ""
         tg.edit_message_text(
@@ -255,7 +262,6 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
     elif action == "ihint":  # item: user wants to type a corrected name
         idx = int(parts[2])
         item = payload["itens"][idx]
-        # Save the ORIGINAL receipt text so we can save it as an alias later
         item["original_descricao"] = item.get("original_descricao") or item.get("descricao", "")
         payload["awaiting_text_for_item"] = idx
         tg.edit_message_text(
@@ -264,6 +270,21 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             f"(o que a nota mostra: <code>{_esc(item.get('descricao', '?'))}</code>)",
             reply_markup=None,
         )
+    elif action == "psize":  # pack size for an item
+        idx = int(parts[2])
+        val = parts[3]
+        if val == "custom":
+            payload["awaiting_pack_size_for_item"] = idx
+            tg.edit_message_text(
+                chat_id, message_id,
+                f"📦 Item {idx+1}: digite o número de unidades por embalagem.",
+                reply_markup=None,
+            )
+            state.delete_state(_spreadsheet_id(), state_id, service=service)
+            state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+            return
+        n = max(1, int(val))
+        _apply_pack_size(chat_id, message_id, payload, idx, n, service=service)
     elif action == "save":  # final save
         _finalize(chat_id, message_id, payload, state_id, service=service)
         return
@@ -276,6 +297,37 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
     _next_step(chat_id, new_state_id, payload, service=service)
 
 
+def _apply_pack_size(chat_id, message_id, payload, idx, n, service=None):
+    """Persist a confirmed pack_size: update items_resolved, save alias, send confirmation message."""
+    item = payload["itens"][idx]
+    res = payload["items_resolved"][idx]
+    res["pack_size"] = n
+    produto_id = res["produto_id"]
+    alias_text = item.get("original_descricao") or item.get("descricao", "")
+    aliases.save(
+        _spreadsheet_id(), "PRODUTO", alias_text, produto_id,
+        pack_size=n, service=service,
+    )
+
+    qtde = float(item.get("qtde_embalagens", 1) or 1)
+    preco_total = float(item.get("preco_total", 0) or 0)
+    total_un = qtde * n
+    unit_price = preco_total / total_un if total_un > 0 else 0
+
+    if n > 1:
+        label = (
+            f"📦 Item {idx+1}: <b>{n} un por embalagem</b> · "
+            f"{int(qtde) if qtde == int(qtde) else qtde}×{n} = {total_un:g} un · "
+            f"R$ {unit_price:.2f}/un"
+        )
+    else:
+        label = (
+            f"📦 Item {idx+1}: <b>unidade avulsa</b> · "
+            f"R$ {unit_price:.2f}/un"
+        )
+    tg.edit_message_text(chat_id, message_id, label, reply_markup=None)
+
+
 # ============================================================================
 # Step machine
 # ============================================================================
@@ -284,7 +336,6 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
     """Send the next prompt based on current state."""
     # 1. Resolve supplier
     if payload.get("resolved_supplier_id") is None:
-        # Auto-resolve if we have an alias-backed match (100% confidence, learned previously)
         forn_match = payload.get("fornecedor_match")
         if forn_match and forn_match.get("from_alias"):
             payload["resolved_supplier_id"] = forn_match["id"]
@@ -299,14 +350,16 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
         _ask_supplier(chat_id, state_id, payload)
         return
 
-    # 2. Resolve each item
+    # 2. Resolve each item (product first, then pack_size)
     itens = payload.get("itens", [])
     resolved = payload.get("items_resolved", [])
     for idx, item in enumerate(itens):
-        if resolved[idx] is None:
+        res = resolved[idx]
+
+        # Stage A — product resolution
+        if res is None:
             prod = item.get("produto_match")
 
-            # Alias-backed SKIP — user previously trained this text to be ignored
             if item.get("alias_skip"):
                 payload["items_resolved"][idx] = {"action": "skip", "reason": "alias_skip"}
                 tg.send_message(
@@ -318,7 +371,6 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
-            # Alias-backed PRODUTO — auto-use the learned mapping
             if prod and prod.get("from_alias"):
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
                 tg.send_message(
@@ -330,7 +382,6 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
-            # Auto-resolve high-confidence fuzzy match
             if prod and prod.get("match_confidence") == "alta":
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
                 state.delete_state(_spreadsheet_id(), state_id, service=service)
@@ -339,6 +390,31 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
                 return
 
             _ask_item(chat_id, state_id, payload, idx)
+            return
+
+        # Stage B — pack_size resolution (skip items don't need it)
+        if res["action"] == "skip":
+            continue
+        if "pack_size" not in res:
+            # Try alias-stored pack_size
+            alias_pack = item.get("alias_pack_size")
+            if alias_pack:
+                res["pack_size"] = int(alias_pack)
+                qtde = float(item.get("qtde_embalagens", 1) or 1)
+                preco_total = float(item.get("preco_total", 0) or 0)
+                total_un = qtde * int(alias_pack)
+                unit_price = preco_total / total_un if total_un > 0 else 0
+                if int(alias_pack) > 1:
+                    tg.send_message(
+                        chat_id,
+                        f"🤖 Item {idx+1}: {int(alias_pack)} un por embalagem "
+                        f"(via memória) — R$ {unit_price:.2f}/un",
+                    )
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+                _next_step(chat_id, new_id, payload, service=service)
+                return
+            _ask_pack_size(chat_id, state_id, payload, idx)
             return
 
     # 3. All resolved — show final save button
@@ -426,8 +502,6 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         tg.send_message_with_buttons(chat_id, text, buttons)
         return
 
-    # No fuzzy match.
-    # For OUTRO: default is skip but offer to cadastrar with explicit categoria choice
     if is_outro:
         text = (
             f"{info}\n\n"
@@ -445,7 +519,6 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         tg.send_message_with_buttons(chat_id, text, buttons)
         return
 
-    # Other categorias: just use the Gemini-suggested categoria when cadastrando
     text = f"{info}\n\nNão achei produto parecido cadastrado. O que faço?"
     buttons = [
         [{"text": f"➕ Cadastrar como {categoria}", "callback_data": f"icreate:{state_id}:{idx}"}],
@@ -454,6 +527,42 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
     ]
     tg.send_message_with_buttons(chat_id, text, buttons)
+
+
+def _ask_pack_size(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
+    item = payload["itens"][idx]
+    res = payload["items_resolved"][idx]
+    qtde = float(item.get("qtde_embalagens", 1) or 1)
+    preco_total = float(item.get("preco_total", 0) or 0)
+    produto_id = res.get("produto_id", "")
+
+    qtde_str = str(int(qtde)) if qtde == int(qtde) else f"{qtde:g}"
+    text_lines = [
+        f"📦 <b>Quantidade — Item {idx+1}/{len(payload['itens'])}</b>",
+        f"Produto: <b>{_esc(produto_id)}</b>",
+        f"Nota mostra: {qtde_str}× — R$ {preco_total:.2f}",
+        "",
+        "Quantas <b>unidades</b> vêm em cada item dessa linha?",
+        "<i>(ex.: pacote de 5 formas = 5; caixa de 30 ovos = 30; unidade avulsa = 1)</i>",
+    ]
+    text = "\n".join(text_lines)
+
+    rows = []
+    current_row = []
+    for preset in PACK_SIZE_PRESETS:
+        total_un = qtde * preset
+        unit_price = preco_total / total_un if total_un > 0 else 0
+        label = f"{preset} un · R$ {unit_price:.2f}/un"
+        current_row.append({"text": label, "callback_data": f"psize:{state_id}:{idx}:{preset}"})
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+    rows.append([{"text": "✏️ Outro número...", "callback_data": f"psize:{state_id}:{idx}:custom"}])
+    rows.append([{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}])
+
+    tg.send_message_with_buttons(chat_id, text, rows)
 
 
 def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
@@ -468,7 +577,7 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
     for idx, item in enumerate(itens):
         r = resolved[idx]
         desc = _esc(item.get("descricao", "?"))
-        preco = item.get("preco_total", 0)
+        preco = float(item.get("preco_total", 0) or 0)
         if not r or r["action"] == "skip":
             line = f"  <s>{desc}</s> — R$ {preco:.2f}"
             if r and r.get("reason") == "outro":
@@ -476,7 +585,14 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
             else:
                 skipped_manual.append(line)
         else:
-            included.append(f"  ✓ {desc} → {r['produto_id']} — R$ {preco:.2f}")
+            qtde = float(item.get("qtde_embalagens", 1) or 1)
+            pack = int(r.get("pack_size") or 1)
+            total_un = qtde * pack
+            unit_price = preco / total_un if total_un > 0 else 0
+            pack_note = ""
+            if pack > 1:
+                pack_note = f" <i>({pack} un/embalagem → {total_un:g} un · R$ {unit_price:.2f}/un)</i>"
+            included.append(f"  ✓ {desc} → {r['produto_id']} — R$ {preco:.2f}{pack_note}")
 
     lines = [
         f"📝 <b>Pronto pra salvar?</b>",
@@ -509,6 +625,7 @@ def _finalize(chat_id: int, message_id: int, payload: dict, state_id: str, servi
         r = resolved[idx]
         if not r or r["action"] == "skip":
             continue
+        pack = int(r.get("pack_size") or item.get("unidades_por_embalagem", 1) or 1)
         compra_id = sheets.append_compra(
             spreadsheet_id=_spreadsheet_id(),
             data=data,
@@ -516,7 +633,7 @@ def _finalize(chat_id: int, message_id: int, payload: dict, state_id: str, servi
             fornecedor_id=forn_id,
             marca=item.get("marca") or "",
             qtde_embalagens=item.get("qtde_embalagens", 1),
-            unidades_por_embalagem=item.get("unidades_por_embalagem", 1),
+            unidades_por_embalagem=pack,
             preco_total=item.get("preco_total", 0),
             notas=f"Via bot — {payload.get('observacoes', '')}".strip(" —"),
             service=service,
@@ -563,20 +680,73 @@ def _format_overview(receipt: dict) -> str:
 
 def handle_text_hint(chat_id: int, text: str) -> bool:
     """
-    If there's an active state with awaiting_text_for_item set, treat the user's
-    text as the corrected description for that item. Re-runs matching with the
-    new descricao and goes back to _ask_item.
+    Dispatch a plain text message to whatever the conversation is waiting on:
+    - awaiting_pack_size_for_item → parse as integer pack size
+    - awaiting_text_for_item → replace the item's descricao and re-match
 
-    Returns True if the text was consumed as a hint, False otherwise.
+    Returns True if the text was consumed, False if no state was awaiting input.
     """
     service = sheets.get_service()
     state_id = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
     if not state_id:
         return False
     payload = state.load_state(_spreadsheet_id(), state_id, service=service)
-    if not payload or "awaiting_text_for_item" not in payload:
+    if not payload:
         return False
 
+    if "awaiting_pack_size_for_item" in payload:
+        return _handle_pack_size_text(chat_id, state_id, payload, text, service)
+
+    if "awaiting_text_for_item" in payload:
+        return _handle_item_name_text(chat_id, state_id, payload, text, service)
+
+    return False
+
+
+def _handle_pack_size_text(chat_id, state_id, payload, text, service) -> bool:
+    idx = payload.get("awaiting_pack_size_for_item")
+    itens = payload.get("itens", [])
+    if idx is None or idx < 0 or idx >= len(itens):
+        payload.pop("awaiting_pack_size_for_item", None)
+        return False
+
+    try:
+        n = int(text.strip().replace(",", ".").split(".")[0])
+        if n <= 0:
+            raise ValueError("non-positive")
+    except (ValueError, TypeError):
+        tg.send_message(chat_id, "❌ Não entendi. Digite um número inteiro maior que zero (ex: 5).")
+        return True
+
+    payload.pop("awaiting_pack_size_for_item", None)
+    # Reuse _apply_pack_size but we don't have a message to edit, so build a fresh confirmation
+    item = itens[idx]
+    res = payload["items_resolved"][idx]
+    res["pack_size"] = n
+    produto_id = res["produto_id"]
+    alias_text = item.get("original_descricao") or item.get("descricao", "")
+    aliases.save(
+        _spreadsheet_id(), "PRODUTO", alias_text, produto_id,
+        pack_size=n, service=service,
+    )
+    qtde = float(item.get("qtde_embalagens", 1) or 1)
+    preco_total = float(item.get("preco_total", 0) or 0)
+    total_un = qtde * n
+    unit_price = preco_total / total_un if total_un > 0 else 0
+    tg.send_message(
+        chat_id,
+        f"📦 Item {idx+1}: <b>{n} un por embalagem</b> · "
+        f"{int(qtde) if qtde == int(qtde) else qtde}×{n} = {total_un:g} un · "
+        f"R$ {unit_price:.2f}/un",
+    )
+
+    state.delete_state(_spreadsheet_id(), state_id, service=service)
+    new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+    _next_step(chat_id, new_state_id, payload, service=service)
+    return True
+
+
+def _handle_item_name_text(chat_id, state_id, payload, text, service) -> bool:
     idx = payload["awaiting_text_for_item"]
     itens = payload.get("itens", [])
     if idx is None or idx < 0 or idx >= len(itens):
@@ -585,10 +755,8 @@ def handle_text_hint(chat_id: int, text: str) -> bool:
 
     item = itens[idx]
     item["descricao"] = text.strip()
-    # Re-run matching with the new descricao
     produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
     item["produto_match"] = matcher.match_produto(item["descricao"], produtos)
-    # Clear any prior alias-skip flag
     item.pop("alias_skip", None)
     del payload["awaiting_text_for_item"]
 
@@ -623,12 +791,8 @@ def handle_include_command(chat_id: int, item_index_1based: int) -> bool:
 
     idx = item_index_1based - 1
     item = itens[idx]
-    # Clear the resolution to force re-review
     payload["items_resolved"][idx] = None
-    # If there was an alias=SKIP, mark this item to bypass it this round
     item.pop("alias_skip", None)
-    # Force going through ask_item even if categoria was OUTRO — override the auto-skip
-    # by setting a "force_review" flag and adjusting categoria handling
     item["force_review"] = True
 
     state.delete_state(_spreadsheet_id(), state_id, service=service)
@@ -639,7 +803,7 @@ def handle_include_command(chat_id: int, item_index_1based: int) -> bool:
 
 
 def _resolve_forn_name(forn_id: str) -> str:
-    """Cheap lookup — read just the supplier name. Cached per-call would be nice but ok for now."""
+    """Cheap lookup — read just the supplier name."""
     try:
         forns = sheets.get_fornecedores(_spreadsheet_id())
         for f in forns:

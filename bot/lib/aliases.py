@@ -2,14 +2,18 @@
 Alias memory — remember which receipt-text maps to which Produto/Fornecedor.
 
 Stored in an `Aliases` tab in the spreadsheet (auto-created on first use):
-| ID    | tipo       | texto_original          | resolved_id | created_at |
-|-------|------------|-------------------------|-------------|------------|
-| A-001 | FORNECEDOR | IMPACTO Atacado & Varejo| FORN-005    | 2026-05-12 |
-| A-002 | PRODUTO    | PLASTILANIA - FORMA ... | FOR-002     | 2026-05-12 |
+| ID    | tipo       | texto_original          | resolved_id | created_at | pack_size |
+|-------|------------|-------------------------|-------------|------------|-----------|
+| A-001 | FORNECEDOR | IMPACTO Atacado & Varejo| FORN-005    | 2026-05-12 |           |
+| A-002 | PRODUTO    | PLASTILANIA - FORMA ... | FOR-002     | 2026-05-12 | 5         |
+
+`pack_size` is only meaningful for PRODUTO aliases: how many units of the
+product come per "embalagem" (the receipt line item). Empty/missing = unknown.
 
 Usage:
-- check_alias(spreadsheet_id, "PRODUTO", text) → returns resolved_id or None
-- save_alias(spreadsheet_id, "FORNECEDOR", text, "FORN-005")
+- check(spreadsheet_id, "PRODUTO", text) → returns resolved_id or None
+- get_alias(spreadsheet_id, "PRODUTO", text) → returns full row dict or None
+- save(spreadsheet_id, "PRODUTO", text, "FOR-002", pack_size=5)
 """
 
 from datetime import date
@@ -18,6 +22,7 @@ from .sheets import get_service, _next_id_for_prefix
 
 
 ALIASES_SHEET = "Aliases"
+ALIASES_HEADER = ["ID", "tipo", "texto_original", "resolved_id", "created_at", "pack_size"]
 
 
 def ensure_sheet(spreadsheet_id: str, service=None) -> None:
@@ -36,7 +41,7 @@ def ensure_sheet(spreadsheet_id: str, service=None) -> None:
         spreadsheetId=spreadsheet_id,
         range=f"{ALIASES_SHEET}!A1",
         valueInputOption="RAW",
-        body={"values": [["ID", "tipo", "texto_original", "resolved_id", "created_at"]]},
+        body={"values": [ALIASES_HEADER]},
     ).execute()
 
 
@@ -45,63 +50,106 @@ def _norm(s: str) -> str:
     return " ".join((s or "").lower().split())
 
 
-def get_all(spreadsheet_id: str, service=None) -> list[dict]:
-    """Return all aliases as list of dicts."""
+def _parse_pack_size(raw) -> Optional[int]:
+    if raw is None or raw == "":
+        return None
+    try:
+        n = int(float(raw))
+        return n if n > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _get_all_with_row_indices(spreadsheet_id: str, service=None) -> list[tuple[int, dict]]:
+    """Return list of (sheet_row_index, alias_dict). Row 1 is the header."""
     service = service or get_service()
     ensure_sheet(spreadsheet_id, service=service)
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=f"{ALIASES_SHEET}!A2:E"
+        spreadsheetId=spreadsheet_id, range=f"{ALIASES_SHEET}!A2:F"
     ).execute()
     rows = result.get("values", [])
-    return [
-        {
-            "id": r[0] if len(r) > 0 else "",
-            "tipo": r[1] if len(r) > 1 else "",
-            "texto_original": r[2] if len(r) > 2 else "",
-            "resolved_id": r[3] if len(r) > 3 else "",
-            "created_at": r[4] if len(r) > 4 else "",
-        }
-        for r in rows if r and r[0]
-    ]
+    out: list[tuple[int, dict]] = []
+    for offset, r in enumerate(rows):
+        if not r or not r[0]:
+            continue
+        out.append((
+            offset + 2,  # +2 = account for header row (1) and 0-based offset
+            {
+                "id": r[0] if len(r) > 0 else "",
+                "tipo": r[1] if len(r) > 1 else "",
+                "texto_original": r[2] if len(r) > 2 else "",
+                "resolved_id": r[3] if len(r) > 3 else "",
+                "created_at": r[4] if len(r) > 4 else "",
+                "pack_size": _parse_pack_size(r[5] if len(r) > 5 else None),
+            },
+        ))
+    return out
 
 
-def check(spreadsheet_id: str, tipo: str, text: str, service=None) -> Optional[str]:
-    """
-    Look up an alias. Returns resolved_id or None.
+def get_all(spreadsheet_id: str, service=None) -> list[dict]:
+    """Return all aliases as a list of dicts (without row indices)."""
+    return [a for _, a in _get_all_with_row_indices(spreadsheet_id, service=service)]
 
-    Match is exact after normalization (lowercase, collapsed whitespace).
-    """
+
+def get_alias(spreadsheet_id: str, tipo: str, text: str, service=None) -> Optional[dict]:
+    """Return the full alias row dict or None. Looks up by (tipo, normalized text)."""
     target = _norm(text)
     if not target:
         return None
     for a in get_all(spreadsheet_id, service=service):
         if a["tipo"] == tipo and _norm(a["texto_original"]) == target:
-            return a["resolved_id"]
+            return a
     return None
 
 
-def save(spreadsheet_id: str, tipo: str, text: str, resolved_id: str, service=None) -> str:
-    """
-    Save an alias. Skips if the exact (tipo, text) already exists.
+def check(spreadsheet_id: str, tipo: str, text: str, service=None) -> Optional[str]:
+    """Back-compat helper — return just the resolved_id."""
+    a = get_alias(spreadsheet_id, tipo, text, service=service)
+    return a["resolved_id"] if a else None
 
-    Returns the new alias ID (A-NNN) or the existing one.
+
+def save(
+    spreadsheet_id: str,
+    tipo: str,
+    text: str,
+    resolved_id: str,
+    pack_size: Optional[int] = None,
+    service=None,
+) -> str:
+    """
+    Create a new alias or update pack_size on an existing one.
+
+    Returns:
+      - new alias ID (A-NNN) when a row was created;
+      - "" when the row already existed (pack_size may still be updated in place).
     """
     service = service or get_service()
     ensure_sheet(spreadsheet_id, service=service)
 
-    # Skip if already saved
-    existing = check(spreadsheet_id, tipo, text, service=service)
-    if existing == resolved_id:
-        return ""  # no-op
+    existing = _get_all_with_row_indices(spreadsheet_id, service=service)
+    target = _norm(text)
+    for row_idx, a in existing:
+        if a["tipo"] != tipo or _norm(a["texto_original"]) != target:
+            continue
+        # Same (tipo, text) already saved.
+        if a["resolved_id"] != resolved_id:
+            # Different resolution recorded earlier — keep history, don't overwrite.
+            return ""
+        if pack_size is not None and a.get("pack_size") != pack_size:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{ALIASES_SHEET}!F{row_idx}",
+                valueInputOption="USER_ENTERED",
+                body={"values": [[pack_size]]},
+            ).execute()
+        return ""
 
+    # Create new row.
     new_id = _next_id_for_prefix(spreadsheet_id, f"{ALIASES_SHEET}!A:A", "A", service=service)
-
-    # Find next empty row
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id, range=f"{ALIASES_SHEET}!A:A"
     ).execute()
     next_row = len(result.get("values", [])) + 1
-
     service.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
         range=f"{ALIASES_SHEET}!A{next_row}",
@@ -113,6 +161,7 @@ def save(spreadsheet_id: str, tipo: str, text: str, resolved_id: str, service=No
                 text,
                 resolved_id,
                 date.today().isoformat(),
+                pack_size if pack_size is not None else "",
             ]]
         },
     ).execute()
