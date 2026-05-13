@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl
+from lib.ui import setup_page, brl, compact_kpi
 
 
 setup_page("Compras", icon="🛒")
@@ -41,7 +41,7 @@ compras = compras.merge(
 # ============================================================================
 # Monthly summary
 # ============================================================================
-st.subheader("Resumo mensal")
+st.markdown("### Resumo mensal")
 
 compras_with_date = compras.dropna(subset=["data"]).copy()
 compras_with_date["mes"] = compras_with_date["data"].dt.to_period("M")
@@ -62,15 +62,15 @@ month_data = compras_with_date[compras_with_date["mes"] == selected_month]
 # KPIs
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    st.metric("Total gasto", brl(month_data["preco_total"].sum()))
+    compact_kpi("Total gasto", brl(month_data["preco_total"].sum()))
 with k2:
-    st.metric("Nº de compras", str(len(month_data)))
+    compact_kpi("Nº de compras", str(len(month_data)))
 with k3:
     n_unique_prods = month_data["produto_id"].nunique()
-    st.metric("Produtos diferentes", str(n_unique_prods))
+    compact_kpi("Produtos diferentes", str(n_unique_prods))
 with k4:
     n_unique_forn = month_data["fornecedor_id"].nunique()
-    st.metric("Fornecedores", str(n_unique_forn))
+    compact_kpi("Fornecedores", str(n_unique_forn))
 
 
 # Breakdown by categoria
@@ -110,7 +110,7 @@ st.divider()
 # ============================================================================
 # Detailed history
 # ============================================================================
-st.subheader("Compras detalhadas")
+st.markdown("### Compras detalhadas")
 
 # Filters
 filt1, filt2, filt3 = st.columns(3)
@@ -186,7 +186,7 @@ st.dataframe(table, hide_index=True, use_container_width=True)
 
 # Expandable detail for each compra
 st.divider()
-st.subheader("Drill-down por compra")
+st.markdown("### Drill-down por compra")
 with st.expander("Clique pra ver detalhes individuais"):
     for _, r in filtered.head(20).iterrows():
         with st.container(border=True):
@@ -200,7 +200,7 @@ with st.expander("Clique pra ver detalhes individuais"):
                 if r.get("notas"):
                     st.caption(f"📝 {r['notas']}")
             with top2:
-                st.metric("Total", brl(r["preco_total"]))
+                compact_kpi("Total", brl(r["preco_total"]))
                 st.caption(f"{r['total_unidades']:.0f} unid · {brl(r['preco_unitario'])}/un")
     if len(filtered) > 20:
         st.caption(f"…e mais {len(filtered) - 20} compra(s) (use os filtros pra refinar)")

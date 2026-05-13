@@ -71,9 +71,9 @@ with tab_new:
     rows_data = []
     for _, t in tamanhos.iterrows():
         with st.container(border=True):
-            preco_str = brl_md(t['preco_venda']) if pd.notna(t['preco_venda']) else '—'
+            preco_str = brl(t['preco_venda']) if pd.notna(t['preco_venda']) else '—'
             meta_str = (
-                f"Custo unitário: <strong>{brl_md(t['custo_total'])}</strong>"
+                f"Custo unitário: <strong>{brl(t['custo_total'])}</strong>"
                 f" · Preço cadastrado: {preco_str}"
             )
             card_title(t['nome'], badge=t['id'], meta=meta_str)
