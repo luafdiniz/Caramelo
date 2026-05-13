@@ -38,11 +38,28 @@ html, body, [class*="css"], .stMarkdown, p, label, div {{
 }}
 
 /* Headings — retro serif */
-h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {{
+h1, h2, h3, h4, h5, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {{
     font-family: 'Fraunces', serif !important;
     font-weight: 700 !important;
     color: {PURPLE_DARK} !important;
     letter-spacing: -0.02em;
+}}
+
+/* Bold and italic inside markdown — readable on cream */
+.stMarkdown strong, .stMarkdown b,
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] b {{
+    color: {PURPLE_DARK} !important;
+    font-weight: 700 !important;
+}}
+
+.stMarkdown em, [data-testid="stMarkdownContainer"] em {{
+    color: {CARAMEL} !important;
+}}
+
+/* Markdown body text */
+.stMarkdown p, [data-testid="stMarkdownContainer"] p {{
+    color: {DARK_BROWN} !important;
 }}
 
 h1 {{

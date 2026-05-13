@@ -32,6 +32,7 @@ with tab_list:
         st.rerun()
 
     df = data.get_tamanho_costs()
+    produtos_df = data.get_produtos()
     if df.empty:
         st.info("Nenhum tamanho cadastrado ainda.")
     else:
@@ -75,7 +76,7 @@ with tab_list:
                         disp_ali["preco_unit_atual"] = disp_ali["preco_unit_atual"].apply(brl)
                         disp_ali["custo_na_receita"] = disp_ali["custo_na_receita"].apply(brl)
                         disp_ali.columns = ["Produto", "Nome", "Qtde", "Preço unit.", "Custo na receita"]
-                        st.dataframe(disp_ali, hide_index=True, use_container_width=True)
+                        st.table(disp_ali.set_index("Produto"))
                         st.caption(
                             f"Total da receita: **{brl_md(brk_ali['custo_na_receita'].sum())}** ÷ "
                             f"rendimento {int(row['rendimento']) if pd.notna(row['rendimento']) else '?'} = "
@@ -89,9 +90,130 @@ with tab_list:
                         disp_emb["preco_unit_atual"] = disp_emb["preco_unit_atual"].apply(brl)
                         disp_emb["custo_por_unidade"] = disp_emb["custo_por_unidade"].apply(brl)
                         disp_emb.columns = ["Produto", "Nome", "Qtde/unid", "Preço unit.", "Custo por pudim"]
-                        st.dataframe(disp_emb, hide_index=True, use_container_width=True)
+                        st.table(disp_emb.set_index("Produto"))
                     else:
                         st.info("Nenhuma embalagem associada a este tamanho.")
+
+                    # --- Edit section ---
+                    st.divider()
+                    st.markdown("**✏️ Editar este tamanho**")
+                    with st.form(f"edit_{row['id']}"):
+                        ec1, ec2 = st.columns(2)
+                        with ec1:
+                            new_preco = st.number_input(
+                                "Preço de venda (R$)",
+                                min_value=0.0,
+                                value=float(row["preco_venda"]) if pd.notna(row.get("preco_venda")) else 0.0,
+                                step=1.0,
+                            )
+                            new_rendimento = st.number_input(
+                                "Rendimento (unidades por receita)",
+                                min_value=1,
+                                value=int(row["rendimento"]) if pd.notna(row.get("rendimento")) else 1,
+                            )
+                        with ec2:
+                            canais = ["Fornada", "Pronta Entrega", "Ambos"]
+                            current_canal = row.get("canal") or "Fornada"
+                            new_canal = st.selectbox(
+                                "Canal",
+                                canais,
+                                index=canais.index(current_canal) if current_canal in canais else 0,
+                            )
+
+                        # Edit packaging: show current + allow add/remove
+                        st.markdown("**Embalagens deste tamanho**")
+                        st.caption("Ajuste qtde de cada uma. Pra remover, deixe a qtde em 0.")
+                        current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
+
+                        edited_qtys = {}
+                        for _, pkg in current_pkgs.iterrows():
+                            edited_qtys[pkg["produto_id"]] = st.number_input(
+                                f"{pkg['produto_id']} — {pkg['produto_nome']}",
+                                min_value=0.0,
+                                value=float(pkg["qtde_por_unidade"]) if pd.notna(pkg.get("qtde_por_unidade")) else 1.0,
+                                step=0.05, format="%.2f",
+                                key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
+                            )
+
+                        # Add new packaging
+                        all_pkg_opts = produtos_df[produtos_df["categoria"].isin(["FOR", "EMB"])].copy() if not produtos_df.empty else pd.DataFrame()
+                        already_in = set(current_pkgs["produto_id"].tolist())
+                        new_pkg_opts = all_pkg_opts[~all_pkg_opts["id"].isin(already_in)]
+                        new_pkg_opts["label"] = new_pkg_opts["id"] + " — " + new_pkg_opts["nome"]
+                        added_pkgs = st.multiselect(
+                            "Adicionar novas embalagens",
+                            options=new_pkg_opts["id"].tolist(),
+                            format_func=lambda x: new_pkg_opts[new_pkg_opts["id"] == x]["label"].iloc[0],
+                            key=f"add_pkg_{row['id']}",
+                        )
+                        for npkg in added_pkgs:
+                            edited_qtys[npkg] = st.number_input(
+                                f"Qtde de {npkg}",
+                                min_value=0.0, value=1.0, step=0.05, format="%.2f",
+                                key=f"new_qty_{row['id']}_{npkg}",
+                            )
+
+                        if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
+                            try:
+                                service = data.get_service()
+                                ssid = data._spreadsheet_id()
+
+                                # Find tamanho row number
+                                all_ids = service.spreadsheets().values().get(
+                                    spreadsheetId=ssid, range="Tamanhos!A:A"
+                                ).execute().get("values", [])
+                                row_num = next(
+                                    i + 1 for i, r in enumerate(all_ids)
+                                    if r and r[0] == row["id"]
+                                )
+
+                                # Update Tamanhos row (E=rendimento, F=canal, G=preco_venda)
+                                service.spreadsheets().values().update(
+                                    spreadsheetId=ssid,
+                                    range=f"Tamanhos!E{row_num}:G{row_num}",
+                                    valueInputOption="USER_ENTERED",
+                                    body={"values": [[int(new_rendimento), new_canal, new_preco if new_preco > 0 else ""]]},
+                                ).execute()
+
+                                # Replace Embalagens_Por_Tamanho rows: delete old, insert new
+                                emb_all = service.spreadsheets().values().get(
+                                    spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
+                                ).execute().get("values", [])
+                                kept = [r for r in emb_all if r and r[0] != row["id"]]
+
+                                # Append new packaging rows for this tamanho
+                                final_pkgs = [(pid, q) for pid, q in edited_qtys.items() if q > 0]
+                                for pid, q in final_pkgs:
+                                    kept.append([row["id"], pid, "", q])
+
+                                # Clear and rewrite the entire block
+                                service.spreadsheets().values().clear(
+                                    spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
+                                ).execute()
+                                if kept:
+                                    # Re-render VLOOKUP for column C
+                                    rewritten = []
+                                    for i, r in enumerate(kept):
+                                        rn = i + 2
+                                        rewritten.append([
+                                            r[0], r[1],
+                                            f"=VLOOKUP(B{rn};Produtos!A:B;2;FALSE)",
+                                            r[3],
+                                        ])
+                                    service.spreadsheets().values().update(
+                                        spreadsheetId=ssid,
+                                        range="Embalagens_Por_Tamanho!A2",
+                                        valueInputOption="USER_ENTERED",
+                                        body={"values": rewritten},
+                                    ).execute()
+
+                                data.invalidate_cache()
+                                st.success(f"✅ {row['id']} atualizado!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
 
 
 # ---------------------------------------------------------------------------
