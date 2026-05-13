@@ -85,14 +85,18 @@ def get_fornecedores() -> pd.DataFrame:
 def get_tamanhos() -> pd.DataFrame:
     service = get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=_spreadsheet_id(), range="Tamanhos!A2:H"
+        spreadsheetId=_spreadsheet_id(), range="Tamanhos!A2:H",
+        valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
     rows = result.get("values", [])
-    df = pd.DataFrame(rows, columns=["id", "nome", "peso_kg", "volume_ml", "rendimento", "canal", "preco_venda", "notas"][:max(1, len(rows[0])) if rows else 1])
-    # Normalize types
+    cols = ["id", "nome", "peso_kg", "volume_ml", "rendimento", "canal", "preco_venda", "notas"]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    # Pad/truncate each row to exactly len(cols)
+    rows = [(r + [""] * len(cols))[:len(cols)] for r in rows]
+    df = pd.DataFrame(rows, columns=cols)
     for col in ("peso_kg", "volume_ml", "rendimento", "preco_venda"):
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 
