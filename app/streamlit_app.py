@@ -33,7 +33,7 @@ with col1:
     kpi("Tamanhos cadastrados", str(len(tamanhos)))
 
 with col2:
-    kpi("Produtos no catálogo", str(len(produtos)))
+    kpi("Insumos no catálogo", str(len(produtos)))
 
 with col3:
     if not compras.empty and compras["data"].notna().any():
@@ -54,7 +54,7 @@ st.subheader("Acessar")
 nav_col1, nav_col2, nav_col3 = st.columns(3)
 with nav_col1:
     st.page_link("pages/1_🍮_Tamanhos.py", label="🍮 Tamanhos", icon="➡️")
-    st.page_link("pages/2_📦_Produtos.py", label="📦 Produtos", icon="➡️")
+    st.page_link("pages/2_📦_Insumos.py", label="📦 Insumos", icon="➡️")
 with nav_col2:
     st.page_link("pages/3_🧮_Calculadora.py", label="🧮 Calculadora", icon="➡️")
     st.page_link("pages/4_🏭_Produção.py", label="🏭 Produção", icon="➡️")

@@ -100,6 +100,23 @@ def get_tamanhos() -> pd.DataFrame:
     return df
 
 
+def _parse_sheets_date(value) -> pd.Timestamp:
+    """
+    Parse a Google Sheets date value.
+
+    With valueRenderOption=UNFORMATTED_VALUE, Sheets returns dates as serial
+    numbers (days since 1899-12-30). Plain strings still come as strings.
+    """
+    if value is None or value == "":
+        return pd.NaT
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return pd.to_datetime(value, unit="D", origin="1899-12-30")
+    try:
+        return pd.to_datetime(value)
+    except (ValueError, TypeError):
+        return pd.NaT
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def get_compras() -> pd.DataFrame:
     service = get_service()
@@ -114,10 +131,9 @@ def get_compras() -> pd.DataFrame:
             "preco_total", "preco_unitario", "notas"]
     if not rows:
         return pd.DataFrame(columns=cols)
-    # Pad short rows
     rows = [r + [""] * (len(cols) - len(r)) for r in rows]
     df = pd.DataFrame(rows, columns=cols)
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    df["data"] = df["data"].apply(_parse_sheets_date)
     for col in ("qtde_embalagens", "unidades_por_embalagem", "total_unidades", "preco_total", "preco_unitario"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
@@ -172,8 +188,8 @@ def get_fornadas() -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     rows = [r + [""] * (len(cols) - len(r)) for r in rows]
     df = pd.DataFrame(rows, columns=cols)
-    df["data_inicio"] = pd.to_datetime(df["data_inicio"], errors="coerce")
-    df["data_fim"] = pd.to_datetime(df["data_fim"], errors="coerce")
+    df["data_inicio"] = df["data_inicio"].apply(_parse_sheets_date)
+    df["data_fim"] = df["data_fim"].apply(_parse_sheets_date)
     for col in ("qtde_produzida", "qtde_vendida", "qtde_cortesia",
                 "preco_venda_unit", "receita_total", "custo_unit", "custo_total", "lucro"):
         df[col] = pd.to_numeric(df[col], errors="coerce")

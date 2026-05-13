@@ -165,15 +165,66 @@ div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBloc
     color: {CREAM} !important;
 }}
 
-/* Dataframes — softer */
+/* Dataframes — force light theme */
 [data-testid="stDataFrame"] {{
     border-radius: 12px;
     overflow: hidden;
+    border: 1px solid {CARAMEL_LIGHT};
 }}
 
-/* Info / warning / success boxes */
-[data-baseweb="notification"] {{
+[data-testid="stDataFrame"] * {{
+    color: {DARK_BROWN} !important;
+}}
+
+[data-testid="stDataFrame"] [role="columnheader"] {{
+    background-color: {BEIGE} !important;
+    color: {PURPLE_DARK} !important;
+    font-weight: 700 !important;
+}}
+
+[data-testid="stDataFrame"] [role="row"]:nth-child(even) {{
+    background-color: rgba(241, 227, 203, 0.3) !important;
+}}
+
+/* Info / warning / success boxes — force readable text */
+[data-baseweb="notification"], .stAlert {{
     border-radius: 12px !important;
+}}
+
+.stAlert, .stAlert p, .stAlert div, .stAlert span {{
+    color: {DARK_BROWN} !important;
+}}
+
+[data-testid="stNotificationContentInfo"] {{
+    background-color: rgba(92, 45, 122, 0.08) !important;
+    color: {DARK_BROWN} !important;
+}}
+
+[data-testid="stNotificationContentSuccess"] {{
+    background-color: rgba(176, 120, 66, 0.12) !important;
+    color: {DARK_BROWN} !important;
+}}
+
+[data-testid="stNotificationContentWarning"] {{
+    background-color: rgba(201, 152, 96, 0.15) !important;
+    color: {DARK_BROWN} !important;
+}}
+
+/* Page links in main area — force dark text */
+[data-testid="stPageLink"] a, a[data-testid="stPageLink-NavLink"] {{
+    color: {PURPLE} !important;
+    font-weight: 600 !important;
+    text-decoration: none !important;
+}}
+
+[data-testid="stPageLink"] a:hover {{
+    color: {PURPLE_DARK} !important;
+    text-decoration: underline !important;
+}}
+
+/* Plain links */
+a {{
+    color: {PURPLE} !important;
 }}
 </style>
 """

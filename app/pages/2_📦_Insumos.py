@@ -1,4 +1,9 @@
-"""Produtos page: list, filter, drill into price history and supplier analysis."""
+"""Insumos page: list, filter, drill into price history and supplier analysis.
+
+In the spreadsheet this tab is called 'Produtos' (legacy), but the UI says
+'Insumos' to match the business vocabulary — these are raw materials, not the
+final sold products (which are Tamanhos).
+"""
 
 import os
 import sys
@@ -12,11 +17,11 @@ from lib import data
 from lib.ui import setup_page, brl
 
 
-setup_page("Produtos", icon="📦")
+setup_page("Insumos", icon="📦")
 require_auth()
 
-st.title("📦 Produtos")
-st.caption("Catálogo, preço atual e histórico por fornecedor.")
+st.title("📦 Insumos")
+st.caption("Catálogo de matérias-primas, preço atual e histórico por fornecedor.")
 
 
 # --- Load -----
