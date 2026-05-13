@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl
+from lib.ui import setup_page, brl, brl_md
 
 
 setup_page("Insumos", icon="📦")
@@ -56,7 +56,7 @@ def stats_for(produto_id: str) -> dict:
 
 prods_enriched = produtos.copy()
 stats_records = [stats_for(p) for p in prods_enriched["id"]]
-for k in ["preco_atual", "menor", "maior", "media", "n_compras", "fornecedor_atual"]:
+for k in ["preco_atual", "menor", "maior", "media", "n_compras", "ultima_data", "fornecedor_atual"]:
     prods_enriched[k] = [s[k] for s in stats_records]
 
 
@@ -96,14 +96,12 @@ for _, p in filtered.iterrows():
             if p.get("notas"):
                 st.caption(f"📝 {p['notas']}")
         with head_col2:
-            st.metric(
-                "Preço unitário atual",
-                brl(p["preco_atual"]),
-                help=(
-                    f"Última compra: {p['ultima_data'].strftime('%d/%m/%Y')}"
-                    if p["ultima_data"] is not None else "Sem compras"
-                ),
+            ultima = p.get("ultima_data")
+            help_text = (
+                f"Última compra: {ultima.strftime('%d/%m/%Y')}"
+                if ultima is not None and pd.notna(ultima) else "Sem compras"
             )
+            st.metric("Preço unitário atual", brl(p["preco_atual"]), help=help_text)
         with head_col3:
             st.metric("Compras registradas", str(int(p["n_compras"])))
 

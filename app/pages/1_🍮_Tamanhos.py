@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, pct
+from lib.ui import setup_page, brl, brl_md, pct
 
 
 setup_page("Tamanhos")
@@ -58,12 +58,12 @@ with tab_list:
                     with m1:
                         st.metric("Custo unitário", brl(row["custo_total"]))
                         st.caption(
-                            f"Alimento {brl(row['custo_alimento'])} + Embalagem {brl(row['custo_embalagem'])}"
+                            f"Alimento {brl_md(row['custo_alimento'])} + Embalagem {brl_md(row['custo_embalagem'])}"
                         )
                     with m2:
                         st.metric("Preço de venda", brl(row["preco_venda"]))
                         if row["lucro"] is not None:
-                            st.caption(f"Lucro {brl(row['lucro'])} · Margem {pct(row['margem'])}")
+                            st.caption(f"Lucro {brl_md(row['lucro'])} · Margem {pct(row['margem'])}")
                         else:
                             st.caption("⚠️ Preço a definir")
 
@@ -77,9 +77,9 @@ with tab_list:
                         disp_ali.columns = ["Produto", "Nome", "Qtde", "Preço unit.", "Custo na receita"]
                         st.dataframe(disp_ali, hide_index=True, use_container_width=True)
                         st.caption(
-                            f"Total da receita: **{brl(brk_ali['custo_na_receita'].sum())}** ÷ "
+                            f"Total da receita: **{brl_md(brk_ali['custo_na_receita'].sum())}** ÷ "
                             f"rendimento {int(row['rendimento']) if pd.notna(row['rendimento']) else '?'} = "
-                            f"**{brl(custo_ali)} por unidade**"
+                            f"**{brl_md(custo_ali)} por unidade**"
                         )
 
                     st.markdown("**📦 Embalagens deste tamanho**")

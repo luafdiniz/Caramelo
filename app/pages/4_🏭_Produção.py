@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl
+from lib.ui import setup_page, brl, brl_md
 
 
 setup_page("Produção", icon="🏭")
@@ -73,8 +73,8 @@ with tab_new:
         with st.container(border=True):
             st.markdown(f"#### {t['nome']} `({t['id']})`")
             st.caption(
-                f"Custo unitário atual: **{brl(t['custo_total'])}** · "
-                f"Preço cadastrado: {brl(t['preco_venda']) if pd.notna(t['preco_venda']) else '—'}"
+                f"Custo unitário atual: **{brl_md(t['custo_total'])}** · "
+                f"Preço cadastrado: {brl_md(t['preco_venda']) if pd.notna(t['preco_venda']) else '—'}"
             )
 
             c1, c2, c3, c4 = st.columns(4)
@@ -114,9 +114,9 @@ with tab_new:
                 lucro = receita - custo_total
                 st.caption(
                     f"📦 Teste/perda: **{teste_perda}** · "
-                    f"💰 Custo total: {brl(custo_total)} · "
-                    f"Receita: {brl(receita)} · "
-                    f"**Lucro: {brl(lucro)}**"
+                    f"💰 Custo total: {brl_md(custo_total)} · "
+                    f"Receita: {brl_md(receita)} · "
+                    f"**Lucro: {brl_md(lucro)}**"
                 )
 
             if produzidos > 0:
@@ -267,8 +267,8 @@ with tab_list:
                     )
                     if pd.notna(r["preco_venda_unit"]):
                         st.caption(
-                            f"Preço unit.: {brl(r['preco_venda_unit'])} · "
-                            f"Receita: {brl(r['receita_total'])}"
+                            f"Preço unit.: {brl_md(r['preco_venda_unit'])} · "
+                            f"Receita: {brl_md(r['receita_total'])}"
                         )
                 with col3:
                     if pd.notna(r["lucro"]):

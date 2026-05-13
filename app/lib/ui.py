@@ -56,10 +56,97 @@ h2 {{
     color: {PURPLE} !important;
 }}
 
-/* Caption text in caramel — echoes the "chave pix" subtitle style of the brand */
-.stCaption, [data-testid="stCaptionContainer"] {{
+/* Caption text — darker for readability against cream */
+.stCaption, [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+[data-testid="stCaptionContainer"] span,
+small, p.caption {{
     color: {CARAMEL} !important;
     font-weight: 500 !important;
+    opacity: 1 !important;
+}}
+
+/* Make sure bold markdown inside captions still bold */
+[data-testid="stCaptionContainer"] strong,
+[data-testid="stCaptionContainer"] b {{
+    color: {PURPLE_DARK} !important;
+    font-weight: 700 !important;
+}}
+
+/* Form inputs — force light theme regardless of system preference */
+.stTextInput input, .stTextArea textarea, .stNumberInput input,
+.stDateInput input, .stTimeInput input,
+[data-baseweb="input"] input, [data-baseweb="textarea"] textarea,
+[data-baseweb="select"] > div {{
+    background-color: {CREAM} !important;
+    color: {DARK_BROWN} !important;
+    border: 1px solid {CARAMEL_LIGHT} !important;
+}}
+
+.stSelectbox > div > div {{
+    background-color: {CREAM} !important;
+}}
+
+.stSelectbox > div > div * {{
+    color: {DARK_BROWN} !important;
+}}
+
+/* Multiselect tags */
+[data-baseweb="tag"] {{
+    background-color: {PURPLE} !important;
+    color: {CREAM} !important;
+    border-radius: 12px !important;
+}}
+
+[data-baseweb="tag"] span {{
+    color: {CREAM} !important;
+}}
+
+/* Labels above inputs */
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] *,
+.stTextInput label, .stNumberInput label, .stDateInput label,
+.stSelectbox label, .stMultiSelect label, .stTextArea label,
+.stCheckbox label, .stRadio label {{
+    color: {PURPLE_DARK} !important;
+    font-weight: 600 !important;
+    opacity: 1 !important;
+}}
+
+/* Help text below labels */
+[data-testid="stWidgetLabelHelp"] {{
+    color: {CARAMEL} !important;
+}}
+
+/* Code-style chips (used for IDs like TAM-001) */
+code {{
+    background-color: {PURPLE_DARK} !important;
+    color: {CREAM} !important;
+    padding: 2px 8px !important;
+    border-radius: 6px !important;
+    font-size: 0.85em !important;
+    font-family: 'JetBrains Mono', monospace !important;
+}}
+
+/* Expander */
+[data-testid="stExpander"] {{
+    border: 1px solid {CARAMEL_LIGHT} !important;
+    border-radius: 12px !important;
+    background-color: rgba(255, 255, 255, 0.5) !important;
+}}
+
+[data-testid="stExpander"] summary {{
+    color: {PURPLE} !important;
+    font-weight: 600 !important;
+}}
+
+[data-testid="stExpander"] summary:hover {{
+    color: {PURPLE_DARK} !important;
+}}
+
+/* Checkbox label text */
+.stCheckbox > label > div:last-child {{
+    color: {DARK_BROWN} !important;
 }}
 
 /* Force cream background and wavy texture — overrides dark mode preference */
@@ -102,7 +189,7 @@ h2 {{
 }}
 
 /* Buttons */
-.stButton > button {{
+.stButton > button, .stButton > button * {{
     border-radius: 24px !important;
     border: 2px solid {PURPLE} !important;
     background-color: {CREAM} !important;
@@ -111,18 +198,27 @@ h2 {{
     transition: all 0.15s ease;
 }}
 
-.stButton > button:hover {{
+.stButton > button:hover, .stButton > button:hover * {{
+    background-color: {PURPLE} !important;
+    color: {CREAM} !important;
+    border-color: {PURPLE} !important;
+}}
+
+.stButton > button[kind="primary"], .stButton > button[kind="primary"] * {{
     background-color: {PURPLE} !important;
     color: {CREAM} !important;
 }}
 
-.stButton > button[kind="primary"] {{
-    background-color: {PURPLE} !important;
-    color: {CREAM} !important;
-}}
-
-.stButton > button[kind="primary"]:hover {{
+.stButton > button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover * {{
     background-color: {PURPLE_DARK} !important;
+}}
+
+.stFormSubmitButton > button, .stFormSubmitButton > button * {{
+    background-color: {PURPLE} !important;
+    color: {CREAM} !important;
+    border-radius: 24px !important;
+    border: 2px solid {PURPLE_DARK} !important;
+    font-weight: 600 !important;
 }}
 
 /* Metric cards */
@@ -320,13 +416,24 @@ def brand_header(title: str, subtitle: str = "") -> None:
 
 
 def brl(value) -> str:
-    """Format a number as BRL currency. Handles None/NaN."""
+    """
+    Format a number as BRL currency. Handles None/NaN.
+
+    Returns 'R$ X,YZ' (plain). Use in: dataframes, st.metric value, st.text.
+    For markdown contexts (st.caption, st.markdown, f-strings in st.write),
+    use brl_md() instead — Streamlit treats `$...$` as LaTeX math.
+    """
     if value is None:
         return "—"
     try:
         return f"R$ {float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except (TypeError, ValueError):
         return "—"
+
+
+def brl_md(value) -> str:
+    """BRL formatted with the `$` escaped — safe for markdown/caption contexts."""
+    return brl(value).replace("$", r"\$")
 
 
 def pct(value) -> str:
