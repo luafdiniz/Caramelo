@@ -205,34 +205,64 @@ code {{
     color: {PURPLE_DARK} !important;
 }}
 
-/* Buttons */
-.stButton > button, .stButton > button * {{
-    border-radius: 24px !important;
-    border: 2px solid {PURPLE} !important;
+/* Buttons — secondary (default) — cream bg, purple text */
+.stButton > button:not([kind="primary"]),
+.stButton > button:not([kind="primary"]) p,
+.stButton > button:not([kind="primary"]) span,
+.stButton > button:not([kind="primary"]) div {{
     background-color: {CREAM} !important;
     color: {PURPLE} !important;
+}}
+
+.stButton > button:not([kind="primary"]) {{
+    border-radius: 24px !important;
+    border: 2px solid {PURPLE} !important;
     font-weight: 600 !important;
     transition: all 0.15s ease;
 }}
 
-.stButton > button:hover, .stButton > button:hover * {{
+.stButton > button:not([kind="primary"]):hover,
+.stButton > button:not([kind="primary"]):hover p,
+.stButton > button:not([kind="primary"]):hover span,
+.stButton > button:not([kind="primary"]):hover div {{
     background-color: {PURPLE} !important;
     color: {CREAM} !important;
     border-color: {PURPLE} !important;
 }}
 
-.stButton > button[kind="primary"], .stButton > button[kind="primary"] * {{
+/* Buttons — primary — purple bg, cream text */
+.stButton > button[kind="primary"],
+.stButton > button[kind="primary"] p,
+.stButton > button[kind="primary"] span,
+.stButton > button[kind="primary"] div {{
     background-color: {PURPLE} !important;
     color: {CREAM} !important;
 }}
 
-.stButton > button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover * {{
+.stButton > button[kind="primary"] {{
+    border-radius: 24px !important;
+    border: 2px solid {PURPLE_DARK} !important;
+    font-weight: 600 !important;
+}}
+
+.stButton > button[kind="primary"]:hover,
+.stButton > button[kind="primary"]:hover p,
+.stButton > button[kind="primary"]:hover span,
+.stButton > button[kind="primary"]:hover div {{
     background-color: {PURPLE_DARK} !important;
+    color: {CREAM} !important;
 }}
 
-.stFormSubmitButton > button, .stFormSubmitButton > button * {{
+/* Form submit buttons */
+.stFormSubmitButton > button,
+.stFormSubmitButton > button p,
+.stFormSubmitButton > button span,
+.stFormSubmitButton > button div {{
     background-color: {PURPLE} !important;
     color: {CREAM} !important;
+}}
+
+.stFormSubmitButton > button {{
     border-radius: 24px !important;
     border: 2px solid {PURPLE_DARK} !important;
     font-weight: 600 !important;
@@ -306,17 +336,22 @@ div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBloc
 }}
 
 /* Tooltips — default is dark, brand them */
-[data-baseweb="tooltip"], [role="tooltip"] {{
+[data-baseweb="tooltip"], [role="tooltip"],
+[data-baseweb="tooltip"] > div,
+[data-baseweb="tooltip"] [data-baseweb="tooltip-arrow"],
+div[data-baseweb="tooltip"] [data-baseweb="tooltip-content"] {{
     background-color: {PURPLE_DARK} !important;
-    color: {CREAM} !important;
     border-radius: 8px !important;
-    padding: 6px 10px !important;
-    font-weight: 500 !important;
-    box-shadow: 0 4px 12px rgba(63, 30, 85, 0.25) !important;
+    box-shadow: 0 4px 12px rgba(63, 30, 85, 0.3) !important;
 }}
 
-[data-baseweb="tooltip"] * {{
+[data-baseweb="tooltip"], [data-baseweb="tooltip"] *,
+[role="tooltip"], [role="tooltip"] *,
+[data-baseweb="tooltip"] p,
+[data-baseweb="tooltip"] span,
+[data-baseweb="tooltip"] div {{
     color: {CREAM} !important;
+    font-weight: 500 !important;
 }}
 
 /* Dataframes (canvas-rendered) */
