@@ -264,17 +264,58 @@ div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBloc
 
 /* Tabs */
 .stTabs [data-baseweb="tab-list"] {{
-    gap: 4px;
+    gap: 8px !important;
+    background: transparent !important;
+    border-bottom: 2px solid {CARAMEL_LIGHT} !important;
+    padding-bottom: 0 !important;
 }}
 
 .stTabs [data-baseweb="tab"] {{
-    background-color: {BEIGE};
-    border-radius: 12px 12px 0 0;
-    font-weight: 600;
+    background-color: {BEIGE} !important;
+    color: {DARK_BROWN} !important;
+    border-radius: 12px 12px 0 0 !important;
+    padding: 10px 22px !important;
+    font-weight: 600 !important;
+    border: 1px solid {CARAMEL_LIGHT} !important;
+    border-bottom: none !important;
+    margin-bottom: -2px !important;
 }}
 
-.stTabs [aria-selected="true"] {{
+.stTabs [data-baseweb="tab"] *, .stTabs [data-baseweb="tab"] p {{
+    color: {DARK_BROWN} !important;
+    font-weight: 600 !important;
+}}
+
+.stTabs [data-baseweb="tab"]:hover {{
+    background-color: {CARAMEL_LIGHT} !important;
+}}
+
+.stTabs [aria-selected="true"], .stTabs [aria-selected="true"] * {{
     background-color: {PURPLE} !important;
+    color: {CREAM} !important;
+}}
+
+/* Hide the default red/pink active-tab underline; we already have purple bg */
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-indicator"] {{
+    background-color: transparent !important;
+    display: none !important;
+}}
+
+.stTabs [data-baseweb="tab-border"] {{
+    background-color: {CARAMEL_LIGHT} !important;
+}}
+
+/* Tooltips — default is dark, brand them */
+[data-baseweb="tooltip"], [role="tooltip"] {{
+    background-color: {PURPLE_DARK} !important;
+    color: {CREAM} !important;
+    border-radius: 8px !important;
+    padding: 6px 10px !important;
+    font-weight: 500 !important;
+    box-shadow: 0 4px 12px rgba(63, 30, 85, 0.25) !important;
+}}
+
+[data-baseweb="tooltip"] * {{
     color: {CREAM} !important;
 }}
 
