@@ -13,6 +13,20 @@ BEIGE = "#F1E3CB"
 DARK_BROWN = "#2D1810"
 
 
+# Subtle wavy SVG pattern (caramel waves, very low opacity) — evokes the brand's swirl background
+_WAVE_SVG = (
+    "data:image/svg+xml;utf8,"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 200'>"
+    "<defs><linearGradient id='g' x1='0' x2='1'>"
+    f"<stop offset='0' stop-color='{CARAMEL}' stop-opacity='0.08'/>"
+    f"<stop offset='1' stop-color='{CARAMEL}' stop-opacity='0.04'/>"
+    "</linearGradient></defs>"
+    "<path d='M0,100 C 200,40 400,160 600,100 S 800,100 800,100 L 800,200 L 0,200 Z' fill='url(%23g)'/>"
+    "<path d='M0,140 C 200,80 400,200 600,140 S 800,140 800,140 L 800,200 L 0,200 Z' fill='url(%23g)'/>"
+    "</svg>"
+).replace("#", "%23")
+
+
 # Custom CSS — applied to every page via setup_page
 _BRAND_CSS = f"""
 <style>
@@ -33,15 +47,38 @@ h1, h2, h3, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {{
 
 h1 {{
     font-weight: 900 !important;
-    font-size: 2.4rem !important;
+    font-size: 2.6rem !important;
+    line-height: 1.05 !important;
+}}
+
+h2 {{
+    font-weight: 800 !important;
+    color: {PURPLE} !important;
+}}
+
+/* Caption text in caramel — echoes the "chave pix" subtitle style of the brand */
+.stCaption, [data-testid="stCaptionContainer"] {{
+    color: {CARAMEL} !important;
+    font-weight: 500 !important;
+}}
+
+/* Subtle wavy background — evokes brand swirls without being noisy */
+[data-testid="stAppViewContainer"] {{
+    background-image: url("{_WAVE_SVG}");
+    background-repeat: repeat;
+    background-size: 600px auto;
+    background-attachment: fixed;
 }}
 
 /* Top decorative bar */
 [data-testid="stAppViewContainer"]::before {{
     content: "";
     display: block;
-    height: 8px;
-    background: linear-gradient(90deg, {PURPLE} 0%, {CARAMEL} 50%, {PURPLE} 100%);
+    height: 10px;
+    background: linear-gradient(90deg, {PURPLE} 0%, {CARAMEL} 40%, {PURPLE} 70%, {CARAMEL} 100%);
+    position: sticky;
+    top: 0;
+    z-index: 999;
 }}
 
 /* Sidebar */
@@ -144,28 +181,40 @@ def setup_page(title: str, icon: str = "🍮") -> None:
 
 
 def brand_header(title: str, subtitle: str = "") -> None:
-    """Decorative header for the home page with the retro vibe."""
+    """
+    Decorative header for the home page with the retro vibe.
+
+    Mimics the brand's double-border style (outer caramel, inner purple)
+    over a cream interior.
+    """
     st.markdown(
         f"""
         <div style="
-            background: linear-gradient(135deg, {BEIGE} 0%, {CREAM} 100%);
-            border: 3px solid {PURPLE};
-            border-radius: 20px;
-            padding: 2rem;
-            text-align: center;
+            background: {CARAMEL};
+            padding: 8px;
+            border-radius: 24px;
             margin-bottom: 1.5rem;
-            box-shadow: 0 4px 16px rgba(92, 45, 122, 0.1);
+            box-shadow: 0 6px 24px rgba(92, 45, 122, 0.15);
         ">
-            <div style="font-size: 4rem; line-height: 1;">🍮</div>
-            <h1 style="
-                font-family: 'Fraunces', serif !important;
-                font-weight: 900;
-                font-size: 3rem !important;
-                color: {PURPLE_DARK};
-                margin: 0.5rem 0 0 0;
-                letter-spacing: -0.02em;
-            ">{title}</h1>
-            {f'<p style="color: {CARAMEL}; font-weight: 500; margin-top: 0.5rem; font-size: 1.1rem;">{subtitle}</p>' if subtitle else ''}
+            <div style="
+                background: {CREAM};
+                border: 3px solid {PURPLE};
+                border-radius: 18px;
+                padding: 2.5rem 2rem;
+                text-align: center;
+            ">
+                <div style="font-size: 4.5rem; line-height: 1; margin-bottom: 0.5rem;">🍮</div>
+                <h1 style="
+                    font-family: 'Fraunces', serif !important;
+                    font-weight: 900 !important;
+                    font-size: 3.2rem !important;
+                    color: {PURPLE_DARK} !important;
+                    margin: 0 !important;
+                    letter-spacing: -0.03em;
+                    line-height: 1;
+                ">{title}</h1>
+                {f'<p style="color: {CARAMEL}; font-weight: 600; margin-top: 0.75rem; font-size: 1.05rem; letter-spacing: 0.02em;">{subtitle}</p>' if subtitle else ''}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
