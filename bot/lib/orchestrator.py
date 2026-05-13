@@ -130,6 +130,60 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             f"✓ Fornecedor: <b>{_esc(payload['fornecedor_match']['nome'])}</b>{learned}",
             reply_markup=None,
         )
+    elif action == "fpicklist":  # show list of all fornecedores as buttons
+        fornecedores = sheets.get_fornecedores(_spreadsheet_id(), service=service)
+        if not fornecedores:
+            tg.edit_message_text(
+                chat_id, message_id,
+                "❌ Nenhum fornecedor cadastrado ainda. Cadastra direto na planilha ou clique em '➕ Criar novo'.",
+                reply_markup=None,
+            )
+            return
+        list_buttons = [
+            [{"text": f"{f['id']} — {f['nome']}", "callback_data": f"fpick:{state_id}:{f['id']}"}]
+            for f in fornecedores
+        ]
+        list_buttons.append([{"text": "← Voltar", "callback_data": f"fback:{state_id}"}])
+        # Edit current message instead of creating new
+        from . import telegram_client as _tg
+        import requests as _req
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        _req.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🏪 Qual fornecedor é esse?\nA nota diz: <code>{_esc(payload.get('fornecedor', '?'))}</code>",
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": list_buttons},
+            },
+            timeout=10,
+        )
+        return
+    elif action == "fpick":  # specific fornecedor chosen from list
+        forn_id = parts[2]
+        fornecedores = sheets.get_fornecedores(_spreadsheet_id(), service=service)
+        forn = next((f for f in fornecedores if f["id"] == forn_id), None)
+        if not forn:
+            tg.edit_message_text(chat_id, message_id, "❌ Fornecedor não encontrado.", reply_markup=None)
+            return
+        payload["resolved_supplier_id"] = forn_id
+        raw_name = payload.get("fornecedor", "")
+        saved = aliases.save(_spreadsheet_id(), "FORNECEDOR", raw_name, forn_id, service=service)
+        learned = "\n📚 <i>Aprendi: dessa nota em diante, esse texto vira esse fornecedor.</i>" if saved else ""
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"✓ Fornecedor: <b>{_esc(forn['nome'])}</b>{learned}",
+            reply_markup=None,
+        )
+    elif action == "fback":  # back to fornecedor question
+        # Re-show the supplier question
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        # Delete the current list message and ask again
+        tg.edit_message_text(chat_id, message_id, "↩️ Voltando...", reply_markup=None)
+        _ask_supplier(chat_id, new_state_id, payload)
+        return
     elif action == "fcreate":  # fornecedor: create new
         nome = payload.get("fornecedor", "DESCONHECIDO")
         new_id = sheets.create_fornecedor(_spreadsheet_id(), nome, service=service)
@@ -305,6 +359,7 @@ def _ask_supplier(chat_id: int, state_id: str, payload: dict) -> None:
         )
         buttons = [
             [{"text": f"✓ Usar {forn_match['id']}", "callback_data": f"fuse:{state_id}"}],
+            [{"text": "🔍 Escolher outro já cadastrado", "callback_data": f"fpicklist:{state_id}"}],
             [{"text": "➕ Criar novo", "callback_data": f"fcreate:{state_id}"}],
             [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
@@ -312,9 +367,10 @@ def _ask_supplier(chat_id: int, state_id: str, payload: dict) -> None:
         text = (
             f"🏪 <b>Fornecedor não reconhecido</b>\n"
             f"Nota diz: <code>{_esc(raw_name)}</code>\n\n"
-            f"Crio um novo fornecedor com esse nome?"
+            f"O que faço?"
         )
         buttons = [
+            [{"text": "🔍 Escolher um já cadastrado", "callback_data": f"fpicklist:{state_id}"}],
             [{"text": "➕ Criar novo", "callback_data": f"fcreate:{state_id}"}],
             [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
