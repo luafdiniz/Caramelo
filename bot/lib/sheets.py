@@ -32,21 +32,26 @@ def get_service(credentials_json: Optional[str] = None):
 
 
 def get_produtos(spreadsheet_id: str, service=None) -> list[dict]:
-    """Return list of products: [{'id': 'ALI-001', 'nome': '...', 'unidade': '...', 'notas': '...'}]"""
+    """Return list of products with optional relacionados (comma-separated IDs)."""
     service = service or get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Produtos!A2:D"
+        spreadsheetId=spreadsheet_id, range="Produtos!A2:E"
     ).execute()
     rows = result.get("values", [])
-    return [
-        {
-            "id": r[0] if len(r) > 0 else "",
+    out = []
+    for r in rows:
+        if not r or not r[0]:
+            continue
+        relacionados_raw = r[4] if len(r) > 4 else ""
+        relacionados = [x.strip() for x in (relacionados_raw or "").split(",") if x.strip()]
+        out.append({
+            "id": r[0],
             "nome": r[1] if len(r) > 1 else "",
             "unidade": r[2] if len(r) > 2 else "",
             "notas": r[3] if len(r) > 3 else "",
-        }
-        for r in rows if r and r[0]
-    ]
+            "relacionados": relacionados,
+        })
+    return out
 
 
 def get_fornecedores(spreadsheet_id: str, service=None) -> list[dict]:
