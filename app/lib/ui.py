@@ -1,7 +1,6 @@
 """Reusable Streamlit UI helpers.
 
-Schema version 3: card_title gains meta_is_html arg, brl/pct handle NaN,
-HTML-escape inputs to compact_kpi/card_title (2026-05-13).
+Schema version 4: adds qty_fmt() (2026-05-14).
 """
 
 import streamlit as st
