@@ -174,6 +174,17 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
 
     tg.answer_callback_query(callback_query_id, "")
 
+    # Dispatch standalone flows (/novo, /compra) by inspecting the payload type.
+    # Receipt flows (foto/PDF/XML) have no `flow` key, so the existing handlers
+    # below pick them up.
+    flow = payload.get("flow")
+    if flow == "novo":
+        _handle_novo_callback(chat_id, message_id, state_id, payload, parts, service)
+        return
+    if flow == "compra":
+        _handle_compra_callback(chat_id, message_id, state_id, payload, parts, service)
+        return
+
     # Supplier decisions
     if action == "fuse":  # fornecedor: use suggestion
         forn_id = payload["fornecedor_match"]["id"]
@@ -744,6 +755,14 @@ def handle_text_hint(chat_id: int, text: str) -> bool:
     if "awaiting_text_for_item" in payload:
         return _handle_item_name_text(chat_id, state_id, payload, text, service)
 
+    # Standalone /novo and /compra flows wait for free-text input at specific steps.
+    flow = payload.get("flow")
+    step = payload.get("step")
+    if flow == "novo" and step in {"name", "unidade_custom"}:
+        return _handle_novo_text(chat_id, state_id, payload, text, service)
+    if flow == "compra" and step in {"qtde", "preco"}:
+        return _handle_compra_text(chat_id, state_id, payload, text, service)
+
     return False
 
 
@@ -846,6 +865,17 @@ def handle_include_command(chat_id: int, item_index_1based: int) -> bool:
     return True
 
 
+def cancel_active_flow(chat_id: int) -> None:
+    """Drop any pending state for this chat. Used by /cancel command."""
+    service = sheets.get_service()
+    sid = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    if sid:
+        state.delete_state(_spreadsheet_id(), sid, service=service)
+        tg.send_message(chat_id, "🚫 Fluxo abortado.")
+    else:
+        tg.send_message(chat_id, "Nenhum fluxo ativo.")
+
+
 def _resolve_forn_name(forn_id: str) -> str:
     """Cheap lookup — read just the supplier name."""
     try:
@@ -856,3 +886,362 @@ def _resolve_forn_name(forn_id: str) -> str:
     except Exception:
         pass
     return forn_id
+
+
+# ============================================================================
+# /novo — standalone product registration
+# ============================================================================
+
+CATEGORIA_PICK_BUTTONS = [
+    [{"text": "🍯 Alimento (ingrediente)", "callback_data_value": "ALI"}],
+    [{"text": "🥣 Forma", "callback_data_value": "FOR"}],
+    [{"text": "📦 Embalagem", "callback_data_value": "EMB"}],
+    [{"text": "🔧 Equipamento durável", "callback_data_value": "EQP"}],
+    [{"text": "🧻 Operacional (consumível)", "callback_data_value": "OPR"}],
+]
+
+UNIDADE_PICK = ["UN", "KG", "L", "M", "Dz", "Pente"]
+
+
+def start_novo_flow(chat_id: int) -> None:
+    """Entry point for /novo command — start standalone product creation flow."""
+    service = sheets.get_service()
+    # Clear any prior pending state (avoid mixing flows)
+    old = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    if old:
+        state.delete_state(_spreadsheet_id(), old, service=service)
+    payload = {"flow": "novo", "step": "name"}
+    state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+    tg.send_message(
+        chat_id,
+        "📝 <b>Cadastrar novo produto</b>\n\n"
+        "Digite o <b>nome</b> do produto (ex: <i>Cacau em pó 50g</i>):\n\n"
+        "<i>Mande /cancel pra abortar.</i>",
+    )
+
+
+def _ask_novo_categoria(chat_id: int, state_id: str, payload: dict) -> None:
+    buttons = [
+        [{"text": row[0]["text"], "callback_data": f"ncat:{state_id}:{row[0]['callback_data_value']}"}]
+        for row in CATEGORIA_PICK_BUTTONS
+    ]
+    buttons.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
+    tg.send_message_with_buttons(
+        chat_id,
+        f"<b>{_esc(payload['name'])}</b>\nQual a <b>categoria</b>?",
+        buttons,
+    )
+
+
+def _ask_novo_unidade(chat_id: int, state_id: str, payload: dict) -> None:
+    rows = []
+    current = []
+    for u in UNIDADE_PICK:
+        current.append({"text": u, "callback_data": f"nuni:{state_id}:{u}"})
+        if len(current) == 3:
+            rows.append(current)
+            current = []
+    if current:
+        rows.append(current)
+    rows.append([{"text": "✏️ Outra unidade...", "callback_data": f"nuni:{state_id}:custom"}])
+    rows.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
+    tg.send_message_with_buttons(
+        chat_id,
+        f"<b>{_esc(payload['name'])}</b> ({payload['categoria']})\nQual a <b>unidade</b>?",
+        rows,
+    )
+
+
+def _ask_novo_confirm(chat_id: int, state_id: str, payload: dict) -> None:
+    text = (
+        "📝 <b>Confirma o cadastro?</b>\n\n"
+        f"Nome: <b>{_esc(payload['name'])}</b>\n"
+        f"Categoria: <b>{payload['categoria']}</b>\n"
+        f"Unidade: <b>{payload['unidade']}</b>"
+    )
+    buttons = [
+        [{"text": "✅ Criar produto", "callback_data": f"ncreate:{state_id}"}],
+        [{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}],
+    ]
+    tg.send_message_with_buttons(chat_id, text, buttons)
+
+
+def _handle_novo_callback(chat_id, message_id, state_id, payload, parts, service) -> None:
+    action = parts[0]
+    if action == "ncat":
+        payload["categoria"] = parts[2]
+        payload["step"] = "unidade"
+        tg.edit_message_text(chat_id, message_id, f"✓ Categoria: <b>{payload['categoria']}</b>", reply_markup=None)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_novo_unidade(chat_id, new_state_id, payload)
+    elif action == "nuni":
+        val = parts[2]
+        if val == "custom":
+            payload["step"] = "unidade_custom"
+            tg.edit_message_text(chat_id, message_id, "✏️ Digite a unidade (ex: <i>FOLHA</i>, <i>ROLO</i>, <i>SACO</i>):", reply_markup=None)
+            state.delete_state(_spreadsheet_id(), state_id, service=service)
+            state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+            return
+        payload["unidade"] = val
+        payload["step"] = "confirm"
+        tg.edit_message_text(chat_id, message_id, f"✓ Unidade: <b>{payload['unidade']}</b>", reply_markup=None)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_novo_confirm(chat_id, new_state_id, payload)
+    elif action == "ncreate":
+        try:
+            new_id = sheets.create_produto(
+                _spreadsheet_id(),
+                payload["name"],
+                payload["categoria"],
+                unidade=payload["unidade"],
+                notas="Cadastrado via bot /novo",
+                service=service,
+            )
+            tg.edit_message_text(
+                chat_id, message_id,
+                f"✅ Criei <b>{new_id}</b> — {_esc(payload['name'])} "
+                f"({payload['categoria']} · {payload['unidade']})",
+                reply_markup=None,
+            )
+            state.delete_state(_spreadsheet_id(), state_id, service=service)
+        except Exception as e:
+            tg.edit_message_text(chat_id, message_id, f"❌ Erro criando: <code>{_esc(e)}</code>", reply_markup=None)
+
+
+def _handle_novo_text(chat_id, state_id, payload, text, service) -> bool:
+    step = payload["step"]
+    if step == "name":
+        payload["name"] = text.strip()
+        payload["step"] = "categoria"
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_novo_categoria(chat_id, new_state_id, payload)
+        return True
+    if step == "unidade_custom":
+        payload["unidade"] = text.strip().upper()
+        payload["step"] = "confirm"
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_novo_confirm(chat_id, new_state_id, payload)
+        return True
+    return False
+
+
+# ============================================================================
+# /compra — standalone purchase registration (no receipt needed)
+# ============================================================================
+
+def start_compra_flow(chat_id: int) -> None:
+    """Entry point for /compra command — register a purchase without a receipt."""
+    service = sheets.get_service()
+    old = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    if old:
+        state.delete_state(_spreadsheet_id(), old, service=service)
+    payload = {"flow": "compra", "step": "cat_filter"}
+    state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+    _ask_compra_categoria_filter(chat_id, payload, service=service)
+
+
+def _ask_compra_categoria_filter(chat_id: int, payload: dict, service=None) -> None:
+    """Ask which category of produto to filter the list by, to avoid 35-button walls."""
+    service = service or sheets.get_service()
+    state_id = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    buttons = [
+        [{"text": row[0]["text"], "callback_data": f"cfcat:{state_id}:{row[0]['callback_data_value']}"}]
+        for row in CATEGORIA_PICK_BUTTONS
+    ]
+    buttons.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
+    tg.send_message_with_buttons(
+        chat_id,
+        "🛒 <b>Cadastrar uma compra (sem nota)</b>\n\n"
+        "Qual a <b>categoria</b> do produto comprado?",
+        buttons,
+    )
+
+
+def _ask_compra_produto(chat_id: int, state_id: str, payload: dict, service=None) -> None:
+    service = service or sheets.get_service()
+    produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
+    cat = payload["cat_filter"]
+    filtered = [p for p in produtos if p["id"].startswith(f"{cat}-")]
+    filtered.sort(key=lambda p: p["nome"])
+    if not filtered:
+        tg.send_message(
+            chat_id,
+            f"❌ Nenhum produto da categoria <b>{cat}</b> cadastrado ainda. "
+            f"Cadastra um com /novo primeiro.",
+        )
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        return
+    buttons = [
+        [{"text": f"{p['id']} — {p['nome'][:50]}", "callback_data": f"cprod:{state_id}:{p['id']}"}]
+        for p in filtered
+    ]
+    buttons.append([{"text": "← Voltar à categoria", "callback_data": f"cback_cat:{state_id}"}])
+    buttons.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
+    tg.send_message_with_buttons(
+        chat_id,
+        f"📦 Escolha o <b>produto</b> ({cat}):",
+        buttons,
+    )
+
+
+def _ask_compra_fornecedor(chat_id: int, state_id: str, payload: dict, service=None) -> None:
+    service = service or sheets.get_service()
+    fornecedores = sheets.get_fornecedores(_spreadsheet_id(), service=service)
+    fornecedores.sort(key=lambda f: f["nome"] or "")
+    if not fornecedores:
+        tg.send_message(chat_id, "❌ Nenhum fornecedor cadastrado. Cadastra na planilha primeiro.")
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        return
+    buttons = [
+        [{"text": f"{f['id']} — {f['nome'] or '(sem nome)'}", "callback_data": f"cforn:{state_id}:{f['id']}"}]
+        for f in fornecedores
+    ]
+    buttons.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
+    tg.send_message_with_buttons(
+        chat_id,
+        f"🏪 Escolha o <b>fornecedor</b>:",
+        buttons,
+    )
+
+
+def _ask_compra_qtde(chat_id: int, payload: dict) -> None:
+    tg.send_message(
+        chat_id,
+        f"📦 <b>Total de unidades</b> compradas?\n"
+        f"<i>(ex.: 30 ovos, digite 30)</i>",
+    )
+
+
+def _ask_compra_preco(chat_id: int, payload: dict) -> None:
+    tg.send_message(
+        chat_id,
+        f"💰 <b>Preço total pago</b> (R$)?\n"
+        f"<i>(ex.: 15,00 ou 15.00)</i>",
+    )
+
+
+def _ask_compra_confirm(chat_id: int, state_id: str, payload: dict) -> None:
+    qtde = float(payload["qtde"])
+    preco = float(payload["preco"])
+    unit_price = preco / qtde if qtde > 0 else 0
+    qtde_str = str(int(qtde)) if qtde == int(qtde) else f"{qtde:g}".replace(".", ",")
+    text = (
+        "🛒 <b>Confirma a compra?</b>\n\n"
+        f"Produto: <b>{payload['produto_id']}</b> — {_esc(payload['produto_nome'])}\n"
+        f"Fornecedor: <b>{payload['fornecedor_id']}</b> — {_esc(payload['fornecedor_nome'])}\n"
+        f"Quantidade: <b>{qtde_str}</b>\n"
+        f"Preço total: <b>R$ {preco:.2f}</b> (R$ {unit_price:.2f}/un)\n"
+        f"Data: <b>{payload['data']}</b>"
+    )
+    buttons = [
+        [{"text": "✅ Salvar compra", "callback_data": f"csave:{state_id}"}],
+        [{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}],
+    ]
+    tg.send_message_with_buttons(chat_id, text, buttons)
+
+
+def _handle_compra_callback(chat_id, message_id, state_id, payload, parts, service) -> None:
+    action = parts[0]
+    if action == "cfcat":
+        payload["cat_filter"] = parts[2]
+        payload["step"] = "produto"
+        tg.edit_message_text(chat_id, message_id, f"✓ Categoria: <b>{payload['cat_filter']}</b>", reply_markup=None)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_compra_produto(chat_id, new_state_id, payload, service=service)
+    elif action == "cback_cat":
+        payload["step"] = "cat_filter"
+        payload.pop("cat_filter", None)
+        tg.edit_message_text(chat_id, message_id, "↩️ Voltando...", reply_markup=None)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_compra_categoria_filter(chat_id, payload, service=service)
+    elif action == "cprod":
+        produto_id = parts[2]
+        produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
+        prod = next((p for p in produtos if p["id"] == produto_id), None)
+        if not prod:
+            tg.edit_message_text(chat_id, message_id, "❌ Produto não encontrado.", reply_markup=None)
+            return
+        payload["produto_id"] = produto_id
+        payload["produto_nome"] = prod["nome"]
+        payload["step"] = "fornecedor"
+        tg.edit_message_text(chat_id, message_id, f"✓ Produto: <b>{produto_id}</b> — {_esc(prod['nome'])}", reply_markup=None)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_compra_fornecedor(chat_id, new_state_id, payload, service=service)
+    elif action == "cforn":
+        forn_id = parts[2]
+        fornecedores = sheets.get_fornecedores(_spreadsheet_id(), service=service)
+        forn = next((f for f in fornecedores if f["id"] == forn_id), None)
+        if not forn:
+            tg.edit_message_text(chat_id, message_id, "❌ Fornecedor não encontrado.", reply_markup=None)
+            return
+        payload["fornecedor_id"] = forn_id
+        payload["fornecedor_nome"] = forn["nome"]
+        payload["step"] = "qtde"
+        tg.edit_message_text(chat_id, message_id, f"✓ Fornecedor: <b>{forn_id}</b> — {_esc(forn['nome'])}", reply_markup=None)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_compra_qtde(chat_id, payload)
+    elif action == "csave":
+        try:
+            compra_id = sheets.append_compra(
+                spreadsheet_id=_spreadsheet_id(),
+                data=payload["data"],
+                produto_id=payload["produto_id"],
+                fornecedor_id=payload["fornecedor_id"],
+                marca="",
+                qtde_embalagens=float(payload["qtde"]),
+                unidades_por_embalagem=1,
+                preco_total=float(payload["preco"]),
+                notas="Via bot /compra (sem nota)",
+                service=service,
+            )
+            tg.edit_message_text(
+                chat_id, message_id,
+                f"✅ Compra <b>{compra_id}</b> salva.",
+                reply_markup=None,
+            )
+            state.delete_state(_spreadsheet_id(), state_id, service=service)
+        except Exception as e:
+            tg.edit_message_text(chat_id, message_id, f"❌ Erro salvando: <code>{_esc(e)}</code>", reply_markup=None)
+
+
+def _handle_compra_text(chat_id, state_id, payload, text, service) -> bool:
+    step = payload["step"]
+    text = text.strip().replace(",", ".")
+    if step == "qtde":
+        try:
+            qtde = float(text)
+            if qtde <= 0:
+                raise ValueError("not positive")
+        except (ValueError, TypeError):
+            tg.send_message(chat_id, "❌ Não entendi. Digite um número maior que zero (ex: <i>30</i>).")
+            return True
+        payload["qtde"] = qtde
+        payload["step"] = "preco"
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_compra_preco(chat_id, payload)
+        return True
+    if step == "preco":
+        try:
+            preco = float(text)
+            if preco <= 0:
+                raise ValueError("not positive")
+        except (ValueError, TypeError):
+            tg.send_message(chat_id, "❌ Não entendi. Digite o preço total em reais (ex: <i>15,00</i>).")
+            return True
+        payload["preco"] = preco
+        payload["data"] = datetime.now().strftime("%Y-%m-%d")
+        payload["step"] = "confirm"
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _ask_compra_confirm(chat_id, new_state_id, payload)
+        return True
+    return False

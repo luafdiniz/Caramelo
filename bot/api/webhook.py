@@ -75,17 +75,35 @@ def _process_update(update: dict) -> None:
             tg.send_message(
                 chat_id,
                 "<b>Pudim Caramelo Bot</b> 🍮\n\n"
-                "Manda uma <b>foto</b> de nota fiscal, um <b>PDF</b>, ou o <b>XML</b> da NF-e "
-                "que eu extraio os itens e adiciono em Compras.\n\n"
                 "📷 Foto / 📄 PDF → leitura via IA\n"
-                "📄 XML → leitura estruturada (mais precisa)\n\n"
+                "📄 XML NF-e → leitura estruturada (mais precisa)\n\n"
                 "Comandos:\n"
-                "/start /help — esta mensagem\n"
+                "/novo — cadastrar produto sem nota\n"
+                "/compra — registrar compra sem nota (ex: feira)\n"
+                "/cancel — abortar fluxo em andamento\n"
                 "/whoami — mostra seu chat id\n"
-                "<code>incluir N</code> — re-revisar item N da última nota (caso tenha sido auto-ignorado)",
+                "<code>incluir N</code> — re-revisar item N da última nota",
             )
         elif text.startswith("/whoami"):
             tg.send_message(chat_id, f"Seu chat_id: <code>{chat_id}</code>")
+        elif text.startswith("/novo"):
+            try:
+                orchestrator.start_novo_flow(chat_id)
+            except Exception as e:
+                tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+                traceback.print_exc()
+        elif text.startswith("/compra"):
+            try:
+                orchestrator.start_compra_flow(chat_id)
+            except Exception as e:
+                tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+                traceback.print_exc()
+        elif text.startswith("/cancel"):
+            try:
+                orchestrator.cancel_active_flow(chat_id)
+            except Exception as e:
+                tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+                traceback.print_exc()
         else:
             # First, check if there's an active "awaiting text correction" state
             # (user clicked "Corrigir nome" on an item review)
