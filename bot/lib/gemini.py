@@ -127,3 +127,103 @@ def parse_receipt(file_bytes: bytes, api_key: Optional[str] = None, mime_type: O
         return json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw[:500]}")
+
+
+TEXT_PROMPT = """Você está extraindo uma compra a partir de uma descrição em texto livre em português brasileiro mandada por usuário num chat.
+
+A pessoa que envia é dona de um negócio de pudim caseiro. Os textos costumam ser informais, tipo:
+- "comprei 30 ovos na feira por 15 reais"
+- "duas latas de leite condensado, 8 reais cada, no apoio mineiro"
+- "papel toalha 12 unidades 24,90 supernosso"
+- "uma forma de pudim grande 6,50 na maria chocolate"
+
+Retorne APENAS um JSON válido com o mesmo formato do parser de nota fiscal:
+
+{
+  "fornecedor": "Nome do fornecedor mencionado ou \"DESCONHECIDO\" se não foi mencionado",
+  "data": "YYYY-MM-DD relativa à data de hoje quando houver indicação (hoje, ontem, semana passada, dia 5...) ou null",
+  "total": 0.00,
+  "itens": [
+    {
+      "descricao": "Nome do produto",
+      "marca": null,
+      "categoria": "ALI" | "FOR" | "EMB" | "EQP" | "OPR" | "OUTRO",
+      "qtde_embalagens": 1,
+      "unidades_por_embalagem": 1,
+      "preco_unitario": 0.00,
+      "preco_total": 0.00,
+      "confianca": "alta" | "media" | "baixa"
+    }
+  ],
+  "observacoes": "Notas curtas sobre a interpretação (ambiguidade, suposições)",
+  "confianca_geral": "alta" | "media" | "baixa"
+}
+
+Categorias (mesma classificação do parser de nota):
+- ALI = alimentos/ingredientes (açúcar, leite, ovo, leite condensado, etc.)
+- FOR = formas de pudim (forma plástica, alumínio, pote pra pudim, etc.)
+- EMB = embalagens (sacola, fita, etiqueta, adesivo, celofane, colher descartável, etc.)
+- EQP = equipamentos duráveis (panela, grade, luva silicone, espátula, batedeira, etc.)
+- OPR = consumíveis operacionais (papel toalha, palito, sabão neutro, etc.)
+- OUTRO = pessoal ou irrelevante (bebidas, cosméticos, etc.)
+
+Regras de cálculo:
+- "30 ovos por 15 reais" → qtde_embalagens=30, unidades_por_embalagem=1, preco_total=15.00, preco_unitario=0.50
+- "2 latas a 8 reais cada" → qtde=2, preco_unitario=8.00, preco_total=16.00
+- Se mencionar só preço unitário, calcule total = qtde × unitário
+- Se mencionar só total, calcule unitário = total / qtde
+- Use ponto decimal (não vírgula) nos números
+
+Regras de confiança:
+- Se quantidade, produto e preço estiverem claros: confianca "alta"
+- Se algum desses estiver implícito ou ambíguo: "media"
+- Se faltar algo crítico (sem produto, sem preço, sem qtde): "baixa" e explique em observacoes
+
+Se a mensagem NÃO descrever uma compra (saudação, pergunta, comando aleatório), responda:
+{
+  "fornecedor": "DESCONHECIDO",
+  "data": null,
+  "total": 0,
+  "itens": [],
+  "observacoes": "Mensagem não parece descrever uma compra.",
+  "confianca_geral": "baixa"
+}
+"""
+
+
+def parse_receipt_text(text: str, api_key: Optional[str] = None, today: Optional[str] = None) -> dict:
+    """
+    Parse a free-text purchase description (e.g. "comprei 30 ovos na feira por 15 reais")
+    and return the same dict shape that `parse_receipt()` produces.
+
+    `today` is injected into the prompt so relative dates ("hoje", "ontem") can be
+    resolved without giving Gemini access to a clock.
+    """
+    api_key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not configured")
+
+    if today is None:
+        from datetime import date
+        today = date.today().isoformat()
+
+    client = genai.Client(api_key=api_key)
+    prompt = f"{TEXT_PROMPT}\n\nHoje é {today}.\n\nTexto do usuário:\n\"\"\"\n{text}\n\"\"\""
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+        config=types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
+        ),
+    )
+
+    raw = response.text or ""
+    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+    raw = re.sub(r"\s*```$", "", raw)
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw[:500]}")

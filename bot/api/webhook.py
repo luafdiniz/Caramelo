@@ -125,7 +125,24 @@ def _process_update(update: dict) -> None:
                     tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
                     traceback.print_exc()
                 return
-            tg.send_message(chat_id, "📸 Manda uma foto de nota fiscal pra eu processar.")
+
+            # Last resort — treat as free-text purchase description (Gemini parses).
+            # If Gemini returns no items the function returns False and we fall
+            # through to the default help message.
+            try:
+                if orchestrator.handle_text_receipt(chat_id, text):
+                    return
+            except Exception as e:
+                tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+                traceback.print_exc()
+                return
+
+            tg.send_message(
+                chat_id,
+                "📸 Manda foto/PDF/XML de nota, ou descreve a compra em texto "
+                "(ex: <i>comprei 30 ovos na feira por 15 reais</i>).\n"
+                "Comandos: /novo /compra /cancel /help",
+            )
         return
 
     # Button callback

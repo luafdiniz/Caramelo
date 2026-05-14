@@ -865,6 +865,29 @@ def handle_include_command(chat_id: int, item_index_1based: int) -> bool:
     return True
 
 
+def handle_text_receipt(chat_id: int, text: str) -> bool:
+    """
+    Treat free-text as a purchase description, parse via Gemini, drop into the
+    same review flow as a photo. Returns True if Gemini extracted at least one
+    item (and review started); False if Gemini found nothing useful (caller
+    should show the default help message).
+    """
+    tg.send_message(chat_id, "🤖 Entendendo a descrição...")
+    try:
+        receipt = gemini.parse_receipt_text(text)
+    except Exception as e:
+        tg.send_message(chat_id, f"❌ Não consegui interpretar: <code>{_esc(e)}</code>")
+        return True  # consumed the message even though parse failed
+
+    itens = receipt.get("itens") or []
+    if not itens:
+        # Gemini decided this isn't a purchase. Let webhook show its default reply.
+        return False
+
+    _start_review_flow(chat_id, receipt)
+    return True
+
+
 def cancel_active_flow(chat_id: int) -> None:
     """Drop any pending state for this chat. Used by /cancel command."""
     service = sheets.get_service()
