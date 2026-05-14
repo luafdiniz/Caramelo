@@ -66,13 +66,29 @@ Regras pra classificar:
 """
 
 
-def parse_receipt(image_bytes: bytes, api_key: Optional[str] = None) -> dict:
+def _sniff_mime(data: bytes, fallback: str = "image/jpeg") -> str:
+    """Guess the MIME type from the first bytes of a file."""
+    if data[:4] == b"%PDF":
+        return "application/pdf"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] in (b"GIF8",):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return fallback
+
+
+def parse_receipt(file_bytes: bytes, api_key: Optional[str] = None, mime_type: Optional[str] = None) -> dict:
     """
-    Parse a receipt image using Gemini Flash.
+    Parse a receipt (image or PDF) using Gemini Flash.
 
     Args:
-        image_bytes: Raw image bytes (JPG, PNG, HEIC supported by Gemini)
+        file_bytes: Raw bytes — JPG/PNG/WEBP/HEIC image, or PDF document.
         api_key: Gemini API key. If None, reads from GEMINI_API_KEY env var.
+        mime_type: Override the MIME type. If None, sniffs from the file header.
 
     Returns:
         Parsed receipt dict with structure defined in SYSTEM_PROMPT.
@@ -85,12 +101,15 @@ def parse_receipt(image_bytes: bytes, api_key: Optional[str] = None) -> dict:
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not configured")
 
+    if mime_type is None:
+        mime_type = _sniff_mime(file_bytes)
+
     client = genai.Client(api_key=api_key)
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
             SYSTEM_PROMPT,
         ],
         config=types.GenerateContentConfig(

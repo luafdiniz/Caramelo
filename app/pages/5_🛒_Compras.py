@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, compact_kpi
+from lib.ui import setup_page, brl, compact_kpi, qty_fmt
 
 
 setup_page("Compras", icon="🛒")
@@ -166,13 +166,15 @@ disp = filtered.copy()
 disp["data_str"] = disp["data"].dt.strftime("%d/%m/%Y").fillna("—")
 disp["preco_total_str"] = disp["preco_total"].apply(brl)
 disp["preco_unitario_str"] = disp["preco_unitario"].apply(brl)
+disp["qtde_embalagens_str"] = disp["qtde_embalagens"].apply(qty_fmt)
+disp["unidades_por_embalagem_str"] = disp["unidades_por_embalagem"].apply(qty_fmt)
 disp["produto_disp"] = disp.apply(
     lambda r: f"{r['produto_id']} — {r['produto_nome'] or '?'}", axis=1
 )
 
 table = disp[[
     "id", "data_str", "produto_disp", "marca",
-    "qtde_embalagens", "unidades_por_embalagem",
+    "qtde_embalagens_str", "unidades_por_embalagem_str",
     "preco_total_str", "preco_unitario_str",
     "fornecedor_nome",
 ]].copy()

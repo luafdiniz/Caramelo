@@ -23,7 +23,7 @@ State is kept in the hidden _BotState tab. Keys we use in the state dict:
 
 import os
 from datetime import datetime
-from . import gemini, sheets, matcher, state, aliases, telegram_client as tg
+from . import gemini, nfe_xml, sheets, matcher, state, aliases, telegram_client as tg
 
 
 SPREADSHEET_ID = None
@@ -48,18 +48,62 @@ PACK_SIZE_PRESETS = [1, 5, 10, 12, 24, 30]
 
 
 # ============================================================================
-# Photo handler — entrypoint
+# Entry points — photo / document / xml all funnel into _start_review_flow
 # ============================================================================
 
 def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
-    tg.send_message(chat_id, "📸 Recebi a nota, processando...")
-
+    tg.send_message(chat_id, "📸 Recebi a foto, processando...")
     try:
-        receipt = gemini.parse_receipt(image_bytes)
+        receipt = gemini.parse_receipt(image_bytes, mime_type="image/jpeg")
     except Exception as e:
         tg.send_message(chat_id, f"❌ Erro ao processar a imagem: <code>{_esc(e)}</code>")
         return
+    _start_review_flow(chat_id, receipt)
 
+
+def handle_document(
+    chat_id: int,
+    file_id: str,
+    file_bytes: bytes,
+    mime_type: str = "",
+    filename: str = "",
+) -> None:
+    """Handle a Telegram document message (PDF, XML, etc)."""
+    fname_lower = (filename or "").lower()
+    mime_lower = (mime_type or "").lower()
+    is_xml = (
+        mime_lower in ("application/xml", "text/xml")
+        or fname_lower.endswith(".xml")
+        or file_bytes[:5].lstrip().startswith(b"<?xml")
+    )
+    is_pdf = mime_lower == "application/pdf" or fname_lower.endswith(".pdf") or file_bytes[:4] == b"%PDF"
+
+    if is_xml:
+        tg.send_message(chat_id, "📄 Recebi a NF-e XML, processando...")
+        try:
+            receipt = nfe_xml.parse_nfe_xml(file_bytes)
+        except Exception as e:
+            tg.send_message(chat_id, f"❌ Erro ao processar XML: <code>{_esc(e)}</code>")
+            return
+    elif is_pdf:
+        tg.send_message(chat_id, "📄 Recebi o PDF, processando...")
+        try:
+            receipt = gemini.parse_receipt(file_bytes, mime_type="application/pdf")
+        except Exception as e:
+            tg.send_message(chat_id, f"❌ Erro ao processar PDF: <code>{_esc(e)}</code>")
+            return
+    else:
+        tg.send_message(
+            chat_id,
+            "⚠️ Tipo de arquivo não suportado. Manda foto (JPG/PNG), PDF ou XML de NF-e.",
+        )
+        return
+
+    _start_review_flow(chat_id, receipt)
+
+
+def _start_review_flow(chat_id: int, receipt: dict) -> None:
+    """Shared: enrich receipt with matcher + aliases, save state, start review."""
     service = sheets.get_service()
     produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
     fornecedores = sheets.get_fornecedores(_spreadsheet_id(), service=service)

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+  <infNFe Id="NFe35260513123456000199550010000001231000001234" versao="4.00">
+    <ide>
+      <cUF>35</cUF>
+      <cNF>00000123</cNF>
+      <natOp>VENDA</natOp>
+      <mod>55</mod>
+      <serie>1</serie>
+      <nNF>123</nNF>
+      <dhEmi>2026-05-13T14:30:00-03:00</dhEmi>
+      <tpNF>1</tpNF>
+      <idDest>1</idDest>
+      <cMunFG>3550308</cMunFG>
+      <tpImp>1</tpImp>
+      <tpEmis>1</tpEmis>
+      <cDV>4</cDV>
+      <tpAmb>2</tpAmb>
+      <finNFe>1</finNFe>
+      <indFinal>1</indFinal>
+      <indPres>1</indPres>
+      <procEmi>0</procEmi>
+      <verProc>1.0</verProc>
+    </ide>
+    <emit>
+      <CNPJ>13123456000199</CNPJ>
+      <xNome>ACQUA EMBALAGENS LTDA</xNome>
+      <xFant>ACQUA EMBALAGENS</xFant>
+      <enderEmit>
+        <xLgr>RUA DAS EMBALAGENS</xLgr>
+        <nro>100</nro>
+        <xBairro>CENTRO</xBairro>
+        <cMun>3550308</cMun>
+        <xMun>SAO PAULO</xMun>
+        <UF>SP</UF>
+        <CEP>01000000</CEP>
+      </enderEmit>
+      <IE>123456789012</IE>
+      <CRT>3</CRT>
+    </emit>
+    <dest>
+      <CPF>12345678901</CPF>
+      <xNome>PUDIM CARAMELO</xNome>
+      <indIEDest>9</indIEDest>
+    </dest>
+    <det nItem="1">
+      <prod>
+        <cProd>LACRE001</cProd>
+        <cEAN>SEM GTIN</cEAN>
+        <xProd>LACRE TERMOSSELAVEL 80MM</xProd>
+        <NCM>39232990</NCM>
+        <CFOP>5102</CFOP>
+        <uCom>UN</uCom>
+        <qCom>100.0000</qCom>
+        <vUnCom>0.1500000000</vUnCom>
+        <vProd>15.00</vProd>
+        <cEANTrib>SEM GTIN</cEANTrib>
+        <uTrib>UN</uTrib>
+        <qTrib>100.0000</qTrib>
+        <vUnTrib>0.1500000000</vUnTrib>
+        <indTot>1</indTot>
+      </prod>
+      <imposto>
+        <ICMS>
+          <ICMS00>
+            <orig>0</orig>
+            <CST>00</CST>
+            <modBC>3</modBC>
+            <vBC>15.00</vBC>
+            <pICMS>18.00</pICMS>
+            <vICMS>2.70</vICMS>
+          </ICMS00>
+        </ICMS>
+      </imposto>
+    </det>
+    <det nItem="2">
+      <prod>
+        <cProd>POTE250</cProd>
+        <cEAN>SEM GTIN</cEAN>
+        <xProd>POTE PLASTICO 250ML COM TAMPA</xProd>
+        <NCM>39235000</NCM>
+        <CFOP>5102</CFOP>
+        <uCom>UN</uCom>
+        <qCom>50.0000</qCom>
+        <vUnCom>1.3000000000</vUnCom>
+        <vProd>65.00</vProd>
+        <cEANTrib>SEM GTIN</cEANTrib>
+        <uTrib>UN</uTrib>
+        <qTrib>50.0000</qTrib>
+        <vUnTrib>1.3000000000</vUnTrib>
+        <indTot>1</indTot>
+      </prod>
+      <imposto>
+        <ICMS>
+          <ICMS00>
+            <orig>0</orig>
+            <CST>00</CST>
+            <modBC>3</modBC>
+            <vBC>65.00</vBC>
+            <pICMS>18.00</pICMS>
+            <vICMS>11.70</vICMS>
+          </ICMS00>
+        </ICMS>
+      </imposto>
+      <infAdProd>Cor branca, tampa transparente</infAdProd>
+    </det>
+    <total>
+      <ICMSTot>
+        <vBC>80.00</vBC>
+        <vICMS>14.40</vICMS>
+        <vICMSDeson>0.00</vICMSDeson>
+        <vFCP>0.00</vFCP>
+        <vBCST>0.00</vBCST>
+        <vST>0.00</vST>
+        <vFCPST>0.00</vFCPST>
+        <vFCPSTRet>0.00</vFCPSTRet>
+        <vProd>80.00</vProd>
+        <vFrete>0.00</vFrete>
+        <vSeg>0.00</vSeg>
+        <vDesc>0.00</vDesc>
+        <vII>0.00</vII>
+        <vIPI>0.00</vIPI>
+        <vIPIDevol>0.00</vIPIDevol>
+        <vPIS>0.00</vPIS>
+        <vCOFINS>0.00</vCOFINS>
+        <vOutro>0.00</vOutro>
+        <vNF>80.00</vNF>
+      </ICMSTot>
+    </total>
+    <transp>
+      <modFrete>9</modFrete>
+    </transp>
+    <pag>
+      <detPag>
+        <tPag>01</tPag>
+        <vPag>80.00</vPag>
+      </detPag>
+    </pag>
+    <infAdic>
+      <infCpl>Venda direta ao consumidor final</infCpl>
+    </infAdic>
+  </infNFe>
+</NFe>

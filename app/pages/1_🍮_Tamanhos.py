@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title
+from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title, qty_fmt
 
 
 setup_page("Tamanhos")
@@ -95,6 +95,7 @@ with tab_list:
                     custo_ali, brk_ali = data.calc_custo_alimento_unid(row["id"])
                     if not brk_ali.empty:
                         disp_ali = brk_ali[["produto_id", "produto_nome", "qtde", "preco_unit_atual", "custo_na_receita"]].copy()
+                        disp_ali["qtde"] = disp_ali["qtde"].apply(qty_fmt)
                         disp_ali["preco_unit_atual"] = disp_ali["preco_unit_atual"].apply(brl)
                         disp_ali["custo_na_receita"] = disp_ali["custo_na_receita"].apply(brl)
                         disp_ali.columns = ["Produto", "Nome", "Qtde", "Preço unit.", "Custo na receita"]
@@ -109,6 +110,7 @@ with tab_list:
                     custo_emb, brk_emb = data.calc_custo_embalagem_unid(row["id"])
                     if not brk_emb.empty:
                         disp_emb = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade", "preco_unit_atual", "custo_por_unidade"]].copy()
+                        disp_emb["qtde_por_unidade"] = disp_emb["qtde_por_unidade"].apply(qty_fmt)
                         disp_emb["preco_unit_atual"] = disp_emb["preco_unit_atual"].apply(brl)
                         disp_emb["custo_por_unidade"] = disp_emb["custo_por_unidade"].apply(brl)
                         disp_emb.columns = ["Produto", "Nome", "Qtde/unid", "Preço unit.", "Custo por pudim"]
@@ -157,8 +159,12 @@ with tab_list:
                                 key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
                             )
 
-                        # Add new packaging
-                        all_pkg_opts = produtos_df[produtos_df["categoria"].isin(["FOR", "EMB"])].copy() if not produtos_df.empty else pd.DataFrame()
+                        # Add new packaging — sort FOR first, then EMB, alphabetic by name within each
+                        _cat_order = {"FOR": 0, "EMB": 1}
+                        all_pkg_opts = produtos_df[produtos_df["categoria"].isin(_cat_order.keys())].copy() if not produtos_df.empty else pd.DataFrame()
+                        if not all_pkg_opts.empty:
+                            all_pkg_opts["_co"] = all_pkg_opts["categoria"].map(_cat_order)
+                            all_pkg_opts = all_pkg_opts.sort_values(["_co", "nome"]).drop(columns=["_co"])
                         already_in = set(current_pkgs["produto_id"].tolist())
                         new_pkg_opts = all_pkg_opts[~all_pkg_opts["id"].isin(already_in)]
                         new_pkg_opts["label"] = new_pkg_opts["id"] + " — " + new_pkg_opts["nome"]
@@ -374,8 +380,13 @@ with tab_new:
         st.markdown("**📦 Embalagens deste tamanho**")
         st.caption("Quais formas/embalagens cada unidade usa. Adicione tudo que entra no produto final.")
 
-        # Pre-filter to packaging-relevant categorias
-        pkg_options = produtos[produtos["categoria"].isin(["FOR", "EMB"])].copy() if not produtos.empty else pd.DataFrame()
+        # Pre-filter to packaging-relevant categorias, sort FOR first then EMB,
+        # alphabetic by name within each category.
+        _cat_order = {"FOR": 0, "EMB": 1}
+        pkg_options = produtos[produtos["categoria"].isin(_cat_order.keys())].copy() if not produtos.empty else pd.DataFrame()
+        if not pkg_options.empty:
+            pkg_options["_co"] = pkg_options["categoria"].map(_cat_order)
+            pkg_options = pkg_options.sort_values(["_co", "nome"]).drop(columns=["_co"])
         pkg_options["label"] = pkg_options["id"] + " — " + pkg_options["nome"]
 
         selected_pkgs = st.multiselect(

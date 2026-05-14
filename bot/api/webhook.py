@@ -43,6 +43,27 @@ def _process_update(update: dict) -> None:
             traceback.print_exc()
         return
 
+    # Document message (PDF, XML)
+    if msg and msg.get("document"):
+        chat_id = msg["chat"]["id"]
+        if not _allowed_chat(chat_id):
+            tg.send_message(chat_id, "⛔ Não autorizado.")
+            return
+        doc = msg["document"]
+        try:
+            doc_bytes = tg.get_file_bytes(doc["file_id"])
+            orchestrator.handle_document(
+                chat_id=chat_id,
+                file_id=doc["file_id"],
+                file_bytes=doc_bytes,
+                mime_type=doc.get("mime_type", ""),
+                filename=doc.get("file_name", ""),
+            )
+        except Exception as e:
+            tg.send_message(chat_id, f"❌ Erro: <code>{e}</code>")
+            traceback.print_exc()
+        return
+
     # Text command
     if msg and msg.get("text"):
         chat_id = msg["chat"]["id"]
@@ -54,8 +75,10 @@ def _process_update(update: dict) -> None:
             tg.send_message(
                 chat_id,
                 "<b>Pudim Caramelo Bot</b> 🍮\n\n"
-                "Manda uma foto de nota fiscal que eu extraio os itens e adiciono "
-                "na planilha (aba Compras).\n\n"
+                "Manda uma <b>foto</b> de nota fiscal, um <b>PDF</b>, ou o <b>XML</b> da NF-e "
+                "que eu extraio os itens e adiciono em Compras.\n\n"
+                "📷 Foto / 📄 PDF → leitura via IA\n"
+                "📄 XML → leitura estruturada (mais precisa)\n\n"
                 "Comandos:\n"
                 "/start /help — esta mensagem\n"
                 "/whoami — mostra seu chat id\n"

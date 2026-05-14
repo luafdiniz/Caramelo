@@ -677,6 +677,24 @@ def pct(value) -> str:
         return "—"
 
 
+def qty_fmt(value) -> str:
+    """
+    Format a quantity for display — integers show without decimals, fractions
+    show trimmed of trailing zeros. Uses comma as decimal separator (pt-BR).
+
+    Examples: 4.0 → "4", 0.1 → "0,1", 0.395 → "0,395", 1.0 → "1".
+    """
+    if _is_missing(value):
+        return "—"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    # `g` format strips trailing zeros and uses fixed/scientific automatically.
+    # We bump precision so 0.0001 doesn't get truncated to "0".
+    return f"{v:g}".replace(".", ",")
+
+
 def kpi(label: str, value: str, help: str = None) -> None:
     """A metric card."""
     st.metric(label, value, help=help)
