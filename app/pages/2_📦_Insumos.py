@@ -205,17 +205,33 @@ with tab_list:
                 st.markdown("**✏️ Editar este insumo**")
                 with st.form(f"edit_prod_{p['id']}"):
                     new_nome = st.text_input("Nome", value=p["nome"])
-                    new_unidade = st.text_input("Unidade", value=p["unidade"] or "UN")
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        new_unidade = st.text_input("Unidade", value=p["unidade"] or "UN")
+                    with ec2:
+                        new_marca = st.text_input(
+                            "Marca padrão",
+                            value=p.get("marca_padrao") or "",
+                            help="Usada como fallback quando o bot não extrai a marca da nota",
+                        )
                     new_notas = st.text_input("Notas", value=p.get("notas") or "")
                     if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
                         try:
                             row_num = data.find_row_by_id("Produtos", p["id"])
                             service = data.get_service()
+                            # Update columns B (Nome), C (Unidade), D (Notas) and F (Marca_padrao).
+                            # Column E (Relacionados) is left as-is.
                             service.spreadsheets().values().update(
                                 spreadsheetId=data._spreadsheet_id(),
                                 range=f"Produtos!B{row_num}:D{row_num}",
                                 valueInputOption="USER_ENTERED",
                                 body={"values": [[new_nome, new_unidade, new_notas]]},
+                            ).execute()
+                            service.spreadsheets().values().update(
+                                spreadsheetId=data._spreadsheet_id(),
+                                range=f"Produtos!F{row_num}",
+                                valueInputOption="USER_ENTERED",
+                                body={"values": [[new_marca]]},
                             ).execute()
                             data.invalidate_cache()
                             st.success(f"✅ {p['id']} atualizado!")

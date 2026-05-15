@@ -368,17 +368,18 @@ def _apply_pack_size(chat_id, message_id, payload, idx, n, service=None):
     preco_total = float(item.get("preco_total", 0) or 0)
     total_un = qtde * n
     unit_price = preco_total / total_un if total_un > 0 else 0
+    unidade = _get_produto_unidade(item, res)
 
     if n > 1:
         label = (
-            f"📦 Item {idx+1}: <b>{n} un por embalagem</b> · "
-            f"{int(qtde) if qtde == int(qtde) else qtde}×{n} = {total_un:g} un · "
-            f"R$ {unit_price:.2f}/un"
+            f"📦 Item {idx+1}: <b>{n} {unidade} por embalagem</b> · "
+            f"{int(qtde) if qtde == int(qtde) else qtde}×{n} = {total_un:g} {unidade} · "
+            f"R$ {unit_price:.2f}/{unidade}"
         )
     else:
         label = (
-            f"📦 Item {idx+1}: <b>unidade avulsa</b> · "
-            f"R$ {unit_price:.2f}/un"
+            f"📦 Item {idx+1}: <b>1 {unidade} avulsa</b> · "
+            f"R$ {unit_price:.2f}/{unidade}"
         )
     tg.edit_message_text(chat_id, message_id, label, reply_markup=None)
 
@@ -584,21 +585,36 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
     tg.send_message_with_buttons(chat_id, text, buttons)
 
 
+def _get_produto_unidade(item: dict, res: dict) -> str:
+    """Return the produto's natural unit (KG, L, UN, etc.), falling back to 'un'."""
+    pm = item.get("produto_match") or {}
+    if pm.get("unidade"):
+        return pm["unidade"]
+    pid = (res or {}).get("produto_id")
+    if pid:
+        produtos = sheets.get_produtos(_spreadsheet_id())
+        for p in produtos:
+            if p["id"] == pid:
+                return p.get("unidade") or "un"
+    return "un"
+
+
 def _ask_pack_size(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
     item = payload["itens"][idx]
     res = payload["items_resolved"][idx]
     qtde = float(item.get("qtde_embalagens", 1) or 1)
     preco_total = float(item.get("preco_total", 0) or 0)
     produto_id = res.get("produto_id", "")
+    unidade = _get_produto_unidade(item, res)
 
     qtde_str = str(int(qtde)) if qtde == int(qtde) else f"{qtde:g}"
     text_lines = [
         f"📦 <b>Quantidade — Item {idx+1}/{len(payload['itens'])}</b>",
-        f"Produto: <b>{_esc(produto_id)}</b>",
+        f"Produto: <b>{_esc(produto_id)}</b> (unidade: <b>{_esc(unidade)}</b>)",
         f"Nota mostra: {qtde_str}× — R$ {preco_total:.2f}",
         "",
-        "Quantas <b>unidades</b> vêm em cada item dessa linha?",
-        "<i>(ex.: pacote de 5 formas = 5; caixa de 30 ovos = 30; unidade avulsa = 1)</i>",
+        f"Quantos <b>{_esc(unidade)}</b> vêm em cada item dessa linha?",
+        "<i>(ex.: pacote de 5kg de açúcar = 5; caixa de 30 ovos = 30; unidade avulsa = 1)</i>",
     ]
     text = "\n".join(text_lines)
 
@@ -607,7 +623,7 @@ def _ask_pack_size(chat_id: int, state_id: str, payload: dict, idx: int) -> None
     for preset in PACK_SIZE_PRESETS:
         total_un = qtde * preset
         unit_price = preco_total / total_un if total_un > 0 else 0
-        label = f"{preset} un · R$ {unit_price:.2f}/un"
+        label = f"{preset} {unidade} · R$ {unit_price:.2f}/{unidade}"
         current_row.append({"text": label, "callback_data": f"psize:{state_id}:{idx}:{preset}"})
         if len(current_row) == 2:
             rows.append(current_row)
@@ -675,18 +691,24 @@ def _finalize(chat_id: int, message_id: int, payload: dict, state_id: str, servi
     itens = payload.get("itens", [])
     resolved = payload.get("items_resolved", [])
 
+    # Build a produto_id → marca_padrao map for fallback when Gemini didn't
+    # extract a marca from the receipt.
+    produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
+    marca_padrao_by_id = {p["id"]: (p.get("marca_padrao") or "") for p in produtos}
+
     added = []
     for idx, item in enumerate(itens):
         r = resolved[idx]
         if not r or r["action"] == "skip":
             continue
         pack = int(r.get("pack_size") or item.get("unidades_por_embalagem", 1) or 1)
+        marca = (item.get("marca") or "").strip() or marca_padrao_by_id.get(r["produto_id"], "")
         compra_id = sheets.append_compra(
             spreadsheet_id=_spreadsheet_id(),
             data=data,
             produto_id=r["produto_id"],
             fornecedor_id=forn_id,
-            marca=item.get("marca") or "",
+            marca=marca,
             qtde_embalagens=item.get("qtde_embalagens", 1),
             unidades_por_embalagem=pack,
             preco_total=item.get("preco_total", 0),
