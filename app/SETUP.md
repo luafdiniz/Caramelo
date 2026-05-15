@@ -25,7 +25,7 @@ uma conta (link com GitHub).
 2. Preenche:
    - **Repository:** `luafdiniz/Caramelo`
    - **Branch:** `main`
-   - **Main file path:** `app/🏠_Home.py`
+   - **Main file path:** `app/Home.py`
    - **App URL** (sub-domínio): escolhe um nome tipo `pudim-caramelo` → `pudim-caramelo.streamlit.app`
 
 3. Clica em **Advanced settings**:
