@@ -717,17 +717,27 @@ def _esc_attr(s) -> str:
     return _esc_html(s)
 
 
-def compact_kpi(label: str, value: str, suffix: str = "", help: str = "") -> None:
+def compact_kpi(
+    label: str,
+    value: str,
+    suffix: str = "",
+    help: str = "",
+    tight_top: bool = False,
+) -> None:
     """
     Smaller alternative to st.metric — half the height, same brand styling.
 
     All textual arguments are HTML-escaped before being injected into the markup,
     so it's safe to pass user-controlled strings (e.g. produto names).
+
+    `tight_top=True` pulls the block up with a negative margin so it visually
+    hugs the element above it (used when a caption sits right above the KPI).
     """
     suffix_html = f'<span class="ckpi-suffix">{_esc_html(suffix)}</span>' if suffix else ""
     title_attr = f' title="{_esc_attr(help)}"' if help else ""
+    style_attr = ' style="margin-top: -0.6rem;"' if tight_top else ""
     st.markdown(
-        f'<div class="ckpi"{title_attr}>'
+        f'<div class="ckpi"{title_attr}{style_attr}>'
         f'<span class="ckpi-label">{_esc_html(label)}</span>'
         f'<span class="ckpi-value">{_esc_html(value)}{suffix_html}</span>'
         f'</div>',

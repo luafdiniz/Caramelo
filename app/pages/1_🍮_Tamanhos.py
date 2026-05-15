@@ -84,7 +84,7 @@ with tab_list:
                             f"Alimento {brl_md(row['custo_alimento'])}  \n"
                             f"Embalagem {brl_md(row['custo_embalagem'])}"
                         )
-                        compact_kpi("Custo unitário", brl(row["custo_total"]))
+                        compact_kpi("Custo unitário", brl(row["custo_total"]), tight_top=True)
                     with m2:
                         if pd.notna(row.get("preco_venda")) and pd.notna(row.get("lucro")):
                             st.caption(
@@ -93,7 +93,7 @@ with tab_list:
                             )
                         else:
                             st.caption("⚠️ Preço a definir")
-                        compact_kpi("Preço de venda", brl(row["preco_venda"]))
+                        compact_kpi("Preço de venda", brl(row["preco_venda"]), tight_top=True)
 
                 # Breathing room between the KPI row and the "Ver composição
                 # completa" expander border, so they don't visually collide.
