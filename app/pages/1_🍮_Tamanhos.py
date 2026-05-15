@@ -79,14 +79,20 @@ with tab_list:
                 with col2:
                     m1, m2 = st.columns(2)
                     with m1:
+                        # Components (alimento + embalagem) shown ABOVE the sum (custo unitário)
+                        # in a single caption block so they sit close together.
+                        st.caption(
+                            f"Alimento {brl_md(row['custo_alimento'])}  \n"
+                            f"Embalagem {brl_md(row['custo_embalagem'])}"
+                        )
                         compact_kpi("Custo unitário", brl(row["custo_total"]))
-                        st.caption(f"Alimento {brl_md(row['custo_alimento'])}")
-                        st.caption(f"Embalagem {brl_md(row['custo_embalagem'])}")
                     with m2:
                         compact_kpi("Preço de venda", brl(row["preco_venda"]))
                         if pd.notna(row.get("preco_venda")) and pd.notna(row.get("lucro")):
-                            st.caption(f"Lucro {brl_md(row['lucro'])}")
-                            st.caption(f"Margem {pct(row['margem'])}")
+                            st.caption(
+                                f"Lucro {brl_md(row['lucro'])}  \n"
+                                f"Margem {pct(row['margem'])}"
+                            )
                         else:
                             st.caption("⚠️ Preço a definir")
 
