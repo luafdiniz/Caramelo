@@ -79,15 +79,13 @@ with tab_list:
                 with col2:
                     m1, m2 = st.columns(2)
                     with m1:
-                        # Components (alimento + embalagem) shown ABOVE the sum (custo unitário)
-                        # in a single caption block so they sit close together.
+                        # Components above the sum, both columns symmetric.
                         st.caption(
                             f"Alimento {brl_md(row['custo_alimento'])}  \n"
                             f"Embalagem {brl_md(row['custo_embalagem'])}"
                         )
                         compact_kpi("Custo unitário", brl(row["custo_total"]))
                     with m2:
-                        compact_kpi("Preço de venda", brl(row["preco_venda"]))
                         if pd.notna(row.get("preco_venda")) and pd.notna(row.get("lucro")):
                             st.caption(
                                 f"Lucro {brl_md(row['lucro'])}  \n"
@@ -95,6 +93,11 @@ with tab_list:
                             )
                         else:
                             st.caption("⚠️ Preço a definir")
+                        compact_kpi("Preço de venda", brl(row["preco_venda"]))
+
+                # Breathing room between the KPI row and the "Ver composição
+                # completa" expander border, so they don't visually collide.
+                st.markdown('<div style="height: 0.6rem;"></div>', unsafe_allow_html=True)
 
                 with st.expander("Ver composição completa"):
                     st.markdown("**🍯 Ingredientes** (mesma receita base pra todos os tamanhos)")
