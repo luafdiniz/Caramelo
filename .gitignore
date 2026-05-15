@@ -27,3 +27,14 @@ Caramelo-bot-key*
 
 # Misc local files
 *.rtf
+
+# Recovery codes (Vercel, GitHub, etc.) — NEVER commit
+*recovery-codes*
+*-recovery-codes.txt
+
+# Local screenshots dumped at root
+Screenshot*.png
+Screen*Shot*.png
+
+# Deploy/run logs
+logs/

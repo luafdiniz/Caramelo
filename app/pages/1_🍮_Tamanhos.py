@@ -14,6 +14,31 @@ from lib import data
 from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title, qty_fmt
 
 
+CANAIS_DISPONIVEIS = ["Fornada", "Pronta Entrega", "Evento", "Encomenda"]
+
+
+def _parse_canais(raw: str) -> list:
+    """Parse the canal column from the spreadsheet into a list of canal names.
+
+    Backward-compat: "Ambos" → both Fornada and Pronta Entrega. Comma-separated
+    values are split. Single values become a one-element list.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if raw == "Ambos":
+        return ["Fornada", "Pronta Entrega"]
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+
+def _format_canais(raw: str) -> str:
+    """Display-format the canal value joined with ' + '."""
+    canais = _parse_canais(raw)
+    if not canais:
+        return "—"
+    return " + ".join(canais)
+
+
 setup_page("Tamanhos")
 require_auth()
 
@@ -67,7 +92,7 @@ with tab_list:
                 col1, col2 = st.columns([3, 2])
 
                 with col1:
-                    info_bits = [row["canal"]]
+                    info_bits = [_format_canais(row.get("canal") or "")]
                     if pd.notna(row.get("peso_kg")):
                         info_bits.append(f"{row['peso_kg']:.2f} kg")
                     if pd.notna(row.get("volume_ml")):
@@ -130,6 +155,26 @@ with tab_list:
                     # --- Edit section ---
                     st.divider()
                     st.markdown("**✏️ Editar este tamanho**")
+
+                    # Quick canais toggles (must live OUTSIDE the form so they don't
+                    # auto-submit; they mutate the session_state value that the
+                    # multiselect inside the form reads from on the next render).
+                    canal_key = f"canal_ms_{row['id']}"
+                    if canal_key not in st.session_state:
+                        st.session_state[canal_key] = [
+                            c for c in _parse_canais(row.get("canal") or "")
+                            if c in CANAIS_DISPONIVEIS
+                        ]
+                    qbc1, qbc2 = st.columns(2)
+                    with qbc1:
+                        if st.button("✓ Todos canais", key=f"sel_all_canal_{row['id']}", use_container_width=True):
+                            st.session_state[canal_key] = CANAIS_DISPONIVEIS.copy()
+                            st.rerun()
+                    with qbc2:
+                        if st.button("✗ Limpar canais", key=f"rem_all_canal_{row['id']}", use_container_width=True):
+                            st.session_state[canal_key] = []
+                            st.rerun()
+
                     with st.form(f"edit_{row['id']}"):
                         ec1, ec2 = st.columns(2)
                         with ec1:
@@ -145,13 +190,19 @@ with tab_list:
                                 value=int(row["rendimento"]) if pd.notna(row.get("rendimento")) else 1,
                             )
                         with ec2:
-                            canais = ["Fornada", "Pronta Entrega", "Ambos"]
-                            current_canal = row.get("canal") or "Fornada"
-                            new_canal = st.selectbox(
+                            # Initialize multiselect state from the row's current canal value
+                            canal_key = f"canal_ms_{row['id']}"
+                            if canal_key not in st.session_state:
+                                st.session_state[canal_key] = [
+                                    c for c in _parse_canais(row.get("canal") or "")
+                                    if c in CANAIS_DISPONIVEIS
+                                ]
+                            new_canal_list = st.multiselect(
                                 "Canal",
-                                canais,
-                                index=canais.index(current_canal) if current_canal in canais else 0,
+                                CANAIS_DISPONIVEIS,
+                                key=canal_key,
                             )
+                            new_canal = ",".join(new_canal_list)
 
                         # Edit packaging: show current + allow add/remove
                         st.markdown("**Embalagens deste tamanho**")
@@ -368,7 +419,13 @@ with tab_new:
             )
 
         with col2:
-            canal = st.selectbox("Canal de venda", ["Fornada", "Pronta Entrega", "Ambos"])
+            canal_list = st.multiselect(
+                "Canais de venda",
+                CANAIS_DISPONIVEIS,
+                default=["Fornada"],
+                help="Selecione todos os canais em que esse tamanho pode ser vendido",
+            )
+            canal = ",".join(canal_list)
             preco_venda = st.number_input(
                 "Preço de venda sugerido (R$, opcional)",
                 min_value=0.0, value=0.0, step=1.0,

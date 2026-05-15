@@ -47,7 +47,7 @@ Caramelo/
 │   ├── tests/
 │   └── SETUP.md
 ├── app/                      # Streamlit dashboard
-│   ├── streamlit_app.py
+│   ├── 🏠_Home.py
 │   ├── pages/
 │   ├── lib/
 │   └── SETUP.md
@@ -67,7 +67,7 @@ python tests/test_parser.py
 cd app && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 export SPREADSHEET_ID=... GOOGLE_SERVICE_ACCOUNT_JSON=$(cat ~/Documents/Credenciais/caramelo-bot-key.json) APP_PASSWORD=...
-streamlit run streamlit_app.py
+streamlit run 🏠_Home.py
 ```
 
 Setup full deploy: see [`bot/SETUP.md`](bot/SETUP.md) and [`app/SETUP.md`](app/SETUP.md).

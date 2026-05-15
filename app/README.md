@@ -25,7 +25,7 @@ export SPREADSHEET_ID="1hV9zTIMyX3wlULkWAYN_-nBeNeM6adfL0Zz6MIvwFXE"
 export GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ~/Documents/Credenciais/caramelo-bot-key.json)"
 export APP_PASSWORD="escolha_uma_senha"
 
-streamlit run streamlit_app.py
+streamlit run 🏠_Home.py
 ```
 
 Abre em `http://localhost:8501`.
@@ -47,7 +47,7 @@ Veja `SETUP.md` pro passo a passo de deploy.
 
 ```
 app/
-├── streamlit_app.py        # Home / dashboard
+├── 🏠_Home.py        # Home / dashboard
 ├── pages/
 │   ├── 1_🍮_Tamanhos.py
 │   ├── 2_📦_Produtos.py
