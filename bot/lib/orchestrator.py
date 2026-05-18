@@ -185,6 +185,26 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         _handle_compra_callback(chat_id, message_id, state_id, payload, parts, service)
         return
 
+    # Undo last decision (item resolution or pack_size confirmation)
+    if action == "voltar":
+        undone_idx = _undo_last_decision(payload)
+        if undone_idx is None:
+            tg.edit_message_text(
+                chat_id, message_id,
+                "↩️ Nada a desfazer ainda.",
+                reply_markup=None,
+            )
+            return
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"↩️ Voltando ao item {undone_idx + 1}...",
+            reply_markup=None,
+        )
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _next_step(chat_id, new_state_id, payload, service=service)
+        return
+
     # Supplier decisions
     if action == "fuse":  # fornecedor: use suggestion
         forn_id = payload["fornecedor_match"]["id"]
@@ -605,6 +625,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
 
     hint_button = [{"text": "✏️ Corrigir nome do item", "callback_data": f"ihint:{state_id}:{idx}"}]
     pick_button = [{"text": "🔍 Escolher um já cadastrado", "callback_data": f"ipicklist:{state_id}:{idx}"}]
+    back_button = [{"text": "↩️ Voltar (desfazer última)", "callback_data": f"voltar:{state_id}"}] if _can_undo(payload) else None
 
     if prod:
         text = (
@@ -619,8 +640,10 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
             [{"text": "➕ Criar novo produto", "callback_data": f"icreate:{state_id}:{idx}"}],
             hint_button,
             [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
-            [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
+        if back_button:
+            buttons.append(back_button)
+        buttons.append([{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}])
         tg.send_message_with_buttons(chat_id, text, buttons)
         return
 
@@ -637,8 +660,10 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EQP']}", "callback_data": f"icreate:{state_id}:{idx}:EQP"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['OPR']}", "callback_data": f"icreate:{state_id}:{idx}:OPR"}],
             hint_button,
-            [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
         ]
+        if back_button:
+            buttons.append(back_button)
+        buttons.append([{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}])
         tg.send_message_with_buttons(chat_id, text, buttons)
         return
 
@@ -648,8 +673,10 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         [{"text": f"➕ Cadastrar como {categoria}", "callback_data": f"icreate:{state_id}:{idx}"}],
         hint_button,
         [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
-        [{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}],
     ]
+    if back_button:
+        buttons.append(back_button)
+    buttons.append([{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}])
     tg.send_message_with_buttons(chat_id, text, buttons)
 
 
@@ -699,6 +726,8 @@ def _ask_pack_size(chat_id: int, state_id: str, payload: dict, idx: int) -> None
     if current_row:
         rows.append(current_row)
     rows.append([{"text": "✏️ Outro número...", "callback_data": f"psize:{state_id}:{idx}:custom"}])
+    if _can_undo(payload):
+        rows.append([{"text": "↩️ Voltar (desfazer última)", "callback_data": f"voltar:{state_id}"}])
     rows.append([{"text": "❌ Cancelar tudo", "callback_data": f"cancel:{state_id}"}])
 
     tg.send_message_with_buttons(chat_id, text, rows)
@@ -747,8 +776,10 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
 
     buttons = [
         [{"text": f"💾 Salvar {len(included)} compra(s)", "callback_data": f"save:{state_id}"}],
-        [{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}],
     ]
+    if _can_undo(payload):
+        buttons.append([{"text": "↩️ Voltar (desfazer última)", "callback_data": f"voltar:{state_id}"}])
+    buttons.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
     tg.send_message_with_buttons(chat_id, "\n".join(lines), buttons)
 
 
@@ -987,6 +1018,36 @@ def cancel_active_flow(chat_id: int) -> None:
         tg.send_message(chat_id, "🚫 Fluxo abortado.")
     else:
         tg.send_message(chat_id, "Nenhum fluxo ativo.")
+
+
+def _can_undo(payload: dict) -> bool:
+    """True if there's any item decision (or pack_size) we could revert."""
+    return any(r is not None for r in payload.get("items_resolved", []))
+
+
+def _undo_last_decision(payload: dict):
+    """Revert the most recent decision and return its item index (or None).
+
+    Priority: undo the latest pack_size confirmation (item already had product
+    chosen), then fall back to undoing the latest product resolution (which
+    drops the item back to product question state).
+    """
+    resolved = payload.get("items_resolved", [])
+    # 1. Latest pack_size confirmation
+    for idx in range(len(resolved) - 1, -1, -1):
+        r = resolved[idx]
+        if r and "pack_size" in r:
+            del r["pack_size"]
+            payload["itens"][idx].pop("alias_pack_size", None)
+            return idx
+    # 2. Latest product decision (use/create/skip)
+    for idx in range(len(resolved) - 1, -1, -1):
+        if resolved[idx] is not None:
+            payload["items_resolved"][idx] = None
+            payload["itens"][idx].pop("alias_skip", None)
+            payload["itens"][idx]["force_review"] = True
+            return idx
+    return None
 
 
 def _resolve_forn_name(forn_id: str) -> str:
