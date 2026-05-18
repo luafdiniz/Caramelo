@@ -570,6 +570,143 @@ section[data-testid="stSidebar"] a:hover {{
 a {{
     color: {PURPLE} !important;
 }}
+
+/* ============================================================
+   MOBILE — quick wins (<= 768px)
+   Stack columns, shrink decorative chrome, enlarge touch targets.
+   Does not touch desktop layouts (>= 769px).
+   ============================================================ */
+@media (max-width: 768px) {{
+
+    /* Tighter horizontal padding for the main content */
+    [data-testid="block-container"], .main .block-container {{
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+        padding-top: 1rem !important;
+        max-width: 100% !important;
+    }}
+
+    /* Stack st.columns vertically — the default Streamlit behavior only
+       triggers around 640px and squeezes content unreadably between. */
+    [data-testid="stHorizontalBlock"] {{
+        flex-direction: column !important;
+        flex-wrap: nowrap !important;
+        gap: 0.5rem !important;
+    }}
+    [data-testid="stHorizontalBlock"] > [data-testid="column"],
+    [data-testid="stHorizontalBlock"] > div {{
+        width: 100% !important;
+        min-width: 100% !important;
+        flex: 1 1 100% !important;
+    }}
+
+    /* Smaller hero typography */
+    h1 {{
+        font-size: 1.85rem !important;
+        line-height: 1.1 !important;
+    }}
+    h2 {{ font-size: 1.4rem !important; }}
+    h3 {{ font-size: 1.2rem !important; }}
+    h4 {{ font-size: 1.05rem !important; }}
+
+    /* Shrink the home brand_header so it doesn't take half the screen */
+    .stApp [data-testid="stMarkdownContainer"] > div[style*="border-radius: 24px"] {{
+        padding: 4px !important;
+        margin-bottom: 1rem !important;
+    }}
+    .stApp [data-testid="stMarkdownContainer"] > div[style*="border-radius: 24px"] > div {{
+        padding: 1.25rem 1rem !important;
+    }}
+    .stApp [data-testid="stMarkdownContainer"] > div[style*="border-radius: 24px"] > div > div:first-child {{
+        font-size: 2.5rem !important;
+    }}
+    .stApp [data-testid="stMarkdownContainer"] > div[style*="border-radius: 24px"] h1 {{
+        font-size: 2rem !important;
+    }}
+
+    /* Touch targets — buttons at least 44px tall (iOS guideline) */
+    .stButton > button,
+    .stFormSubmitButton > button {{
+        min-height: 44px !important;
+        padding: 10px 18px !important;
+        font-size: 0.95rem !important;
+    }}
+
+    /* Number/text inputs taller for comfortable typing */
+    .stTextInput input, .stNumberInput input, .stDateInput input,
+    [data-baseweb="input"] input {{
+        min-height: 44px !important;
+        font-size: 16px !important; /* prevents iOS auto-zoom on focus */
+    }}
+
+    /* Selectbox & multiselect taller */
+    [data-baseweb="select"] > div {{
+        min-height: 44px !important;
+    }}
+
+    /* Checkbox larger tap area */
+    .stCheckbox {{ min-height: 40px; }}
+    .stCheckbox > label > div:first-child {{ transform: scale(1.15); }}
+
+    /* Tabs — wrap and pad for thumbs */
+    .stTabs [data-baseweb="tab-list"] {{
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        padding: 10px 14px !important;
+        font-size: 0.9rem !important;
+    }}
+
+    /* Tables — let them scroll horizontally instead of overflowing */
+    [data-testid="stTable"] {{
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+    }}
+    [data-testid="stTable"] table {{
+        font-size: 0.85rem !important;
+    }}
+    [data-testid="stTable"] th, [data-testid="stTable"] td {{
+        padding: 6px 10px !important;
+        white-space: nowrap;
+    }}
+
+    /* Dataframe scroll comfort */
+    [data-testid="stDataFrame"] {{
+        font-size: 0.85rem !important;
+    }}
+
+    /* Expander padding tighter */
+    [data-testid="stExpander"] {{
+        margin: 0.25rem 0 !important;
+    }}
+
+    /* Compact KPI bigger value for readability */
+    .ckpi {{
+        padding: 8px 12px;
+    }}
+    .ckpi-value {{
+        font-size: 1.05rem !important;
+    }}
+
+    /* Metric cards — shrink padding so they don't dominate */
+    [data-testid="stMetric"] {{
+        padding: 0.6rem 0.75rem !important;
+    }}
+    [data-testid="stMetricValue"] {{
+        font-size: 1.4rem !important;
+    }}
+
+    /* Decorative top bar thinner */
+    [data-testid="stAppViewContainer"]::before {{
+        height: 6px !important;
+    }}
+
+    /* Background wave smaller so the cream stays prominent */
+    .stApp, [data-testid="stAppViewContainer"] {{
+        background-size: 300px auto !important;
+    }}
+}}
 </style>
 """
 
