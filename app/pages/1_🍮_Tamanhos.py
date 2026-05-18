@@ -193,6 +193,21 @@ with tab_list:
                             st.session_state[canal_key] = []
                             st.rerun()
 
+                    # Bulk-mark / unmark embalagem checkboxes — must live OUTSIDE the
+                    # form for the same reason as the canais buttons above.
+                    if not brk_emb.empty:
+                        rbc1, rbc2 = st.columns(2)
+                        with rbc1:
+                            if st.button("🗑️ Marcar todas pra remover", key=f"sel_all_rm_{row['id']}", use_container_width=True):
+                                for pid in brk_emb["produto_id"]:
+                                    st.session_state[f"rm_{row['id']}_{pid}"] = True
+                                st.rerun()
+                        with rbc2:
+                            if st.button("↺ Desmarcar todas", key=f"clear_all_rm_{row['id']}", use_container_width=True):
+                                for pid in brk_emb["produto_id"]:
+                                    st.session_state[f"rm_{row['id']}_{pid}"] = False
+                                st.rerun()
+
                     with st.form(f"edit_{row['id']}"):
                         ec1, ec2 = st.columns(2)
                         with ec1:
@@ -224,7 +239,7 @@ with tab_list:
 
                         # Edit packaging: show current + allow add/remove
                         st.markdown("**Embalagens deste tamanho**")
-                        st.caption("Ajuste qtde de cada uma. Marque 🗑️ ou zere a qtde pra remover.")
+                        st.caption("Ajuste a quantidade de cada uma. Marque 🗑️ ou zere o número pra remover.")
                         current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
 
                         edited_qtys = {}
