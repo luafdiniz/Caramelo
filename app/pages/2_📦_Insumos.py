@@ -124,10 +124,28 @@ with tab_list:
         with st.container(border=True):
             head_col1, head_col2, head_col3 = st.columns([4, 2, 2])
             with head_col1:
-                meta = f"{p['categoria']} · {p['unidade']}"
-                if p.get("notas"):
-                    meta += f" · 📝 {p['notas']}"
-                card_title(f"{emoji} {p['nome']}", badge=p["id"], meta=meta)
+                # Pull "Cadastrado via bot ..." out of free-text notes and render
+                # it as a 🤖 hover icon instead — it's metadata, not a note.
+                import html as _html
+                notas_raw = (p.get("notas") or "").strip()
+                is_bot_created = notas_raw.lower().startswith("cadastrado via bot")
+                notas_user = "" if is_bot_created else notas_raw
+
+                meta_parts = [_html.escape(p["categoria"]), _html.escape(p["unidade"])]
+                if notas_user:
+                    meta_parts.append(f"📝 {_html.escape(notas_user)}")
+                if is_bot_created:
+                    meta_parts.append(
+                        '<span title="Cadastrado via bot" style="cursor: help;">🤖</span>'
+                    )
+                meta = " · ".join(meta_parts)
+                card_title(
+                    f"{emoji} {p['nome']}",
+                    badge=p["id"],
+                    meta=meta,
+                    meta_is_html=True,
+                    meta_below=True,
+                )
             with head_col2:
                 ultima = p.get("ultima_data")
                 ultima_str = (

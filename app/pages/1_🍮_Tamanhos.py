@@ -130,7 +130,7 @@ with tab_list:
                         info_bits.append(f"{int(row['volume_ml'])} ml")
                     if pd.notna(row.get("rendimento")):
                         info_bits.append(f"Rendimento {int(row['rendimento'])}/receita")
-                    card_title(row["nome"], badge=row["id"], meta=" · ".join(info_bits))
+                    card_title(row["nome"], badge=row["id"], meta=" · ".join(info_bits), meta_below=True)
 
                 with col2:
                     m1, m2 = st.columns(2)

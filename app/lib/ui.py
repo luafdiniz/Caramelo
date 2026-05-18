@@ -378,6 +378,17 @@ code {{
 
 .ctitle-meta strong {{ color: {PURPLE_DARK} !important; }}
 
+/* Meta as its own row below the title (when card_title(meta_below=True)) */
+.ctitle-meta-row {{
+    color: {CARAMEL} !important;
+    font-size: 0.85rem !important;
+    font-weight: 500;
+    margin: 0 0 0.4rem 0;
+    line-height: 1.5;
+}}
+
+.ctitle-meta-row strong {{ color: {PURPLE_DARK} !important; }}
+
 /* Bordered containers as "cards" */
 div[data-testid="stContainer"] > div > div:has(> div[data-testid="stVerticalBlock"]) {{
     border-radius: 12px;
@@ -900,16 +911,40 @@ def compact_kpi(
     )
 
 
-def card_title(title: str, badge: str = "", meta: str = "", meta_is_html: bool = False) -> None:
+def card_title(
+    title: str,
+    badge: str = "",
+    meta: str = "",
+    meta_is_html: bool = False,
+    meta_below: bool = False,
+) -> None:
     """
-    Compact one-line card header: H4-sized title + optional code badge + meta caption.
+    Compact card header: H4-sized title + optional code badge + meta caption.
 
     `title` and `badge` are always HTML-escaped (user-controlled data).
     `meta` is escaped by default; set `meta_is_html=True` to allow inline
-    markup like <strong>...</strong> when the caller controls the content.
+    markup like <strong>...</strong> or <span title="...">🤖</span> when
+    the caller controls the content.
+
+    `meta_below=True` puts the meta on its own row below the title, instead of
+    inline. Useful in cards with wide right-hand KPIs where the meta inline
+    would otherwise be the only content on the title row (leaving big empty
+    vertical space below).
     """
     badge_html = f'<code>{_esc_html(badge)}</code>' if badge else ""
     meta_safe = meta if meta_is_html else _esc_html(meta)
+
+    if meta_below and meta:
+        st.markdown(
+            f'<div class="ctitle">'
+            f'<span class="ctitle-name">{_esc_html(title)}</span>'
+            f'{badge_html}'
+            f'</div>'
+            f'<div class="ctitle-meta-row">{meta_safe}</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     meta_html = f'<span class="ctitle-meta">{meta_safe}</span>' if meta else ""
     st.markdown(
         f'<div class="ctitle">'
