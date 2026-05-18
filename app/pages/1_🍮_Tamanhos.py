@@ -228,11 +228,20 @@ with tab_list:
                         # Bulk-remove shortcut — lives inside the form because Streamlit
                         # forms don't fire on_change. Effect is applied at save time
                         # rather than visually toggling each row's checkbox.
-                        bulk_rm = st.checkbox(
-                            "🗑️ Remover TODAS as embalagens deste tamanho",
-                            key=f"bulk_rm_{row['id']}",
-                            help="Atalho. Ao salvar, todas as embalagens listadas abaixo serão removidas.",
-                        )
+                        # Aligned to the right column to match the per-row 🗑️ position.
+                        bc1, bc2 = st.columns([5, 1])
+                        with bc1:
+                            st.markdown(
+                                '<div style="text-align: right; padding-top: 0.45rem;">Selecionar todos</div>',
+                                unsafe_allow_html=True,
+                            )
+                        with bc2:
+                            bulk_rm = st.checkbox(
+                                "Selecionar todos",
+                                key=f"bulk_rm_{row['id']}",
+                                label_visibility="collapsed",
+                                help="Marca todos pra remover ao salvar.",
+                            )
                         if bulk_rm:
                             st.warning("⚠️ Ao clicar em Salvar, todas as embalagens abaixo serão removidas.")
 
