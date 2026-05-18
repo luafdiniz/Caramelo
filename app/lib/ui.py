@@ -681,12 +681,30 @@ a {{
         margin: 0.25rem 0 !important;
     }}
 
-    /* Compact KPI bigger value for readability */
+    /* Compact KPI bigger value + breathing room around it.
+       In mobile everything stacks vertically, so the visual gap between a
+       caption and the next KPI/card needs to be explicit (desktop got it for
+       free via the column gap). */
     .ckpi {{
         padding: 8px 12px;
+        margin-top: 0.5rem !important;
+        margin-bottom: 0.5rem !important;
+    }}
+    .ckpi[style*="margin-top: -0.6rem"] {{
+        /* keep the tight_top=True intent: just less aggressive on mobile */
+        margin-top: -0.3rem !important;
     }}
     .ckpi-value {{
         font-size: 1.05rem !important;
+    }}
+
+    /* Captions need line-height: in mobile a markdown two-line caption like
+       "Lucro X  \\n  Margem Y" gets visually crammed without breathing room. */
+    [data-testid="stCaptionContainer"] {{
+        line-height: 1.7 !important;
+    }}
+    [data-testid="stCaptionContainer"] p {{
+        margin-bottom: 0.35rem !important;
     }}
 
     /* Metric cards — shrink padding so they don't dominate */

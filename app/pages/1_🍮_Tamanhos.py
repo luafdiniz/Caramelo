@@ -193,20 +193,26 @@ with tab_list:
                             st.session_state[canal_key] = []
                             st.rerun()
 
-                    # Bulk-mark / unmark embalagem checkboxes — must live OUTSIDE the
-                    # form for the same reason as the canais buttons above.
+                    # Bulk-mark embalagem checkboxes via a single toggle. Lives OUTSIDE
+                    # the form so its on_change can mutate the per-row session_state
+                    # keys before the form re-renders. Checking it ticks every row's
+                    # 🗑️; unchecking clears them all.
                     if not brk_emb.empty:
-                        rbc1, rbc2 = st.columns(2)
-                        with rbc1:
-                            if st.button("🗑️ Marcar todas pra remover", key=f"sel_all_rm_{row['id']}", use_container_width=True):
-                                for pid in brk_emb["produto_id"]:
-                                    st.session_state[f"rm_{row['id']}_{pid}"] = True
-                                st.rerun()
-                        with rbc2:
-                            if st.button("↺ Desmarcar todas", key=f"clear_all_rm_{row['id']}", use_container_width=True):
-                                for pid in brk_emb["produto_id"]:
-                                    st.session_state[f"rm_{row['id']}_{pid}"] = False
-                                st.rerun()
+                        bulk_key = f"bulk_rm_{row['id']}"
+                        _tamanho_id = row["id"]
+                        _pids_list = list(brk_emb["produto_id"])
+
+                        def _toggle_bulk_remove(tid=_tamanho_id, pids=_pids_list, bk=bulk_key):
+                            val = st.session_state.get(bk, False)
+                            for pid in pids:
+                                st.session_state[f"rm_{tid}_{pid}"] = val
+
+                        st.checkbox(
+                            "🗑️ Marcar/desmarcar todas pra remover",
+                            key=bulk_key,
+                            on_change=_toggle_bulk_remove,
+                            help="Atalho: marca = todas com 🗑️, desmarca = todas limpas.",
+                        )
 
                     with st.form(f"edit_{row['id']}"):
                         ec1, ec2 = st.columns(2)
