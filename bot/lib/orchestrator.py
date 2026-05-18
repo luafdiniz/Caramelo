@@ -262,6 +262,70 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             f"📚 <i>Aprendi: dessa nota em diante, esse texto vira esse fornecedor.</i>",
             reply_markup=None,
         )
+    elif action == "ipicklist":  # item: show list of all produtos to pick from
+        idx = int(parts[2])
+        item = payload["itens"][idx]
+        produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
+        if not produtos:
+            tg.edit_message_text(
+                chat_id, message_id,
+                "❌ Nenhum produto cadastrado ainda. Use ➕ Criar novo ou /novo.",
+                reply_markup=None,
+            )
+            return
+        # Sort by categoria prefix order, then by name
+        _cat_order = {"ALI": 0, "FOR": 1, "EMB": 2, "EQP": 3, "OPR": 4}
+        def _sort_key(p):
+            cat = (p["id"].split("-")[0] if "-" in p["id"] else p["id"])
+            return (_cat_order.get(cat, 99), (p.get("nome") or "").lower())
+        sorted_p = sorted(produtos, key=_sort_key)
+        list_buttons = [
+            [{"text": f"{p['id']} — {p['nome'][:50]}", "callback_data": f"ipick:{state_id}:{idx}:{p['id']}"}]
+            for p in sorted_p
+        ]
+        list_buttons.append([{"text": "← Voltar", "callback_data": f"iback:{state_id}:{idx}"}])
+        import requests as _req
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        _req.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": (
+                    f"🔍 Escolha o produto pro item {idx+1}\n"
+                    f"A nota diz: <code>{_esc(item.get('descricao', '?'))}</code>"
+                ),
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": list_buttons},
+            },
+            timeout=10,
+        )
+        return
+    elif action == "ipick":  # specific produto chosen from list
+        idx = int(parts[2])
+        produto_id = parts[3]
+        produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
+        prod = next((p for p in produtos if p["id"] == produto_id), None)
+        if not prod:
+            tg.edit_message_text(chat_id, message_id, "❌ Produto não encontrado.", reply_markup=None)
+            return
+        item = payload["itens"][idx]
+        payload["items_resolved"][idx] = {"action": "use", "produto_id": produto_id}
+        alias_text = item.get("original_descricao") or item.get("descricao", "")
+        saved = aliases.save(_spreadsheet_id(), "PRODUTO", alias_text, produto_id, service=service)
+        learned = "\n📚 <i>Aprendi essa associação.</i>" if saved else ""
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"✓ Item {idx+1}: <b>{_esc(prod['nome'])}</b>{learned}",
+            reply_markup=None,
+        )
+    elif action == "iback":  # back to the item question
+        idx = int(parts[2])
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        tg.edit_message_text(chat_id, message_id, "↩️ Voltando...", reply_markup=None)
+        _ask_item(chat_id, new_state_id, payload, idx)
+        return
     elif action == "iuse":  # item: use suggestion
         idx = int(parts[2])
         item = payload["itens"][idx]
@@ -540,6 +604,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
     )
 
     hint_button = [{"text": "✏️ Corrigir nome do item", "callback_data": f"ihint:{state_id}:{idx}"}]
+    pick_button = [{"text": "🔍 Escolher um já cadastrado", "callback_data": f"ipicklist:{state_id}:{idx}"}]
 
     if prod:
         text = (
@@ -550,6 +615,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         )
         buttons = [
             [{"text": f"✓ Usar {prod['id']}", "callback_data": f"iuse:{state_id}:{idx}"}],
+            pick_button,
             [{"text": "➕ Criar novo produto", "callback_data": f"icreate:{state_id}:{idx}"}],
             hint_button,
             [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],
@@ -565,6 +631,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
         )
         buttons = [
             [{"text": "⏭ Pular (default)", "callback_data": f"iskip:{state_id}:{idx}"}],
+            pick_button,
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['ALI']}", "callback_data": f"icreate:{state_id}:{idx}:ALI"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EMB']}", "callback_data": f"icreate:{state_id}:{idx}:EMB"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EQP']}", "callback_data": f"icreate:{state_id}:{idx}:EQP"}],
@@ -577,6 +644,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
 
     text = f"{info}\n\nNão achei produto parecido cadastrado. O que faço?"
     buttons = [
+        pick_button,
         [{"text": f"➕ Cadastrar como {categoria}", "callback_data": f"icreate:{state_id}:{idx}"}],
         hint_button,
         [{"text": "⏭ Pular este item", "callback_data": f"iskip:{state_id}:{idx}"}],

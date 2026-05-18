@@ -16,6 +16,24 @@ from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title, qty_fm
 
 CANAIS_DISPONIVEIS = ["Fornada", "Pronta Entrega", "Evento", "Encomenda"]
 
+# Units that don't divide: 1 forma, 2 ovos, 3 dúzias. No fractional clicks here.
+INTEGER_UNITS = {"UN", "DZ", "PENTE", "PAR", "JOGO"}
+
+
+def _qty_input_params(produto_id: str, produtos_df: pd.DataFrame):
+    """Return (min_value, step, format, is_int) for a number_input based on the
+    produto's unit. Integer-only for countable units (forma, ovo, pacote, etc.),
+    fractional for measurable ones (kg, l, m)."""
+    if produtos_df.empty:
+        return 0.0, 0.05, "%.2f", False
+    prod = produtos_df[produtos_df["id"] == produto_id]
+    if prod.empty:
+        return 0.0, 0.05, "%.2f", False
+    unidade = (prod.iloc[0].get("unidade") or "").strip().upper()
+    if unidade in INTEGER_UNITS:
+        return 0, 1, "%d", True
+    return 0.0, 0.05, "%.2f", False
+
 
 def _parse_canais(raw: str) -> list:
     """Parse the canal column from the spreadsheet into a list of canal names.
@@ -206,18 +224,33 @@ with tab_list:
 
                         # Edit packaging: show current + allow add/remove
                         st.markdown("**Embalagens deste tamanho**")
-                        st.caption("Ajuste qtde de cada uma. Pra remover, deixe a qtde em 0.")
+                        st.caption("Ajuste qtde de cada uma. Marque 🗑️ ou zere a qtde pra remover.")
                         current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
 
                         edited_qtys = {}
                         for _, pkg in current_pkgs.iterrows():
-                            edited_qtys[pkg["produto_id"]] = st.number_input(
-                                f"{pkg['produto_id']} — {pkg['produto_nome']}",
-                                min_value=0.0,
-                                value=float(pkg["qtde_por_unidade"]) if pd.notna(pkg.get("qtde_por_unidade")) else 1.0,
-                                step=0.05, format="%.2f",
-                                key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
-                            )
+                            min_v, step_v, fmt_v, is_int = _qty_input_params(pkg["produto_id"], produtos_df)
+                            raw_val = pkg.get("qtde_por_unidade")
+                            if pd.notna(raw_val):
+                                val_v = int(round(float(raw_val))) if is_int else float(raw_val)
+                            else:
+                                val_v = 1 if is_int else 1.0
+                            qcol, rcol = st.columns([5, 1])
+                            with qcol:
+                                qty = st.number_input(
+                                    f"{pkg['produto_id']} — {pkg['produto_nome']}",
+                                    min_value=min_v,
+                                    value=val_v,
+                                    step=step_v, format=fmt_v,
+                                    key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
+                                )
+                            with rcol:
+                                st.markdown('<div style="height: 1.8rem;"></div>', unsafe_allow_html=True)
+                                remove = st.checkbox(
+                                    "🗑️", key=f"rm_{row['id']}_{pkg['produto_id']}",
+                                    help="Remover essa embalagem",
+                                )
+                            edited_qtys[pkg["produto_id"]] = 0 if remove else qty
 
                         # Add new packaging — sort FOR first, then EMB, alphabetic by name within each
                         _cat_order = {"FOR": 0, "EMB": 1}
@@ -235,9 +268,12 @@ with tab_list:
                             key=f"add_pkg_{row['id']}",
                         )
                         for npkg in added_pkgs:
+                            min_v, step_v, fmt_v, is_int = _qty_input_params(npkg, produtos_df)
                             edited_qtys[npkg] = st.number_input(
                                 f"Qtde de {npkg}",
-                                min_value=0.0, value=1.0, step=0.05, format="%.2f",
+                                min_value=min_v,
+                                value=(1 if is_int else 1.0),
+                                step=step_v, format=fmt_v,
                                 key=f"new_qty_{row['id']}_{npkg}",
                             )
 
@@ -470,9 +506,12 @@ with tab_new:
             for i, pkg_id in enumerate(selected_pkgs):
                 with qty_cols[i % len(qty_cols)]:
                     pkg_name = pkg_options[pkg_options["id"] == pkg_id]["nome"].iloc[0]
+                    min_v, step_v, fmt_v, is_int = _qty_input_params(pkg_id, produtos)
                     pkg_quantities[pkg_id] = st.number_input(
                         f"{pkg_id} ({pkg_name[:25]}…)" if len(pkg_name) > 25 else f"{pkg_id} ({pkg_name})",
-                        min_value=0.0, value=1.0, step=0.05, format="%.2f",
+                        min_value=min_v,
+                        value=(1 if is_int else 1.0),
+                        step=step_v, format=fmt_v,
                         key=f"qty_{pkg_id}",
                     )
 
