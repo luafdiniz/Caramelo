@@ -476,6 +476,11 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             f"(o que a nota mostra: <code>{_esc(item.get('descricao', '?'))}</code>)",
             reply_markup=None,
         )
+        # Persist the awaiting flag and STOP — must wait for user's text reply,
+        # not advance to the next step. (Mirrors the psize:custom branch.)
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        return
     elif action == "psize":  # pack size for an item
         idx = int(parts[2])
         val = parts[3]
@@ -570,25 +575,23 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
 
             if not force_review and item.get("alias_skip"):
                 payload["items_resolved"][idx] = {"action": "skip", "reason": "alias_skip"}
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
-                tg.send_message_with_buttons(
+                tg.send_message(
                     chat_id,
                     f"🤖 Item {idx+1} ignorado: <i>{_esc(item.get('descricao', '?'))}</i> (via memória)",
-                    [[{"text": f"↩️ Corrigir item {idx+1}", "callback_data": f"iredo:{new_id}:{idx}"}]],
                 )
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
             if not force_review and prod and prod.get("from_alias"):
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
-                tg.send_message_with_buttons(
+                tg.send_message(
                     chat_id,
                     f"🤖 Item {idx+1} reconhecido: <b>{_esc(prod['nome'])}</b> (via memória)",
-                    [[{"text": f"↩️ Corrigir item {idx+1}", "callback_data": f"iredo:{new_id}:{idx}"}]],
                 )
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
@@ -614,15 +617,14 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
                 preco_total = float(item.get("preco_total", 0) or 0)
                 total_un = qtde * int(alias_pack)
                 unit_price = preco_total / total_un if total_un > 0 else 0
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 if int(alias_pack) > 1:
-                    tg.send_message_with_buttons(
+                    tg.send_message(
                         chat_id,
                         f"🤖 Item {idx+1}: {int(alias_pack)} un por embalagem "
                         f"(via memória) — R$ {unit_price:.2f}/un",
-                        [[{"text": f"↩️ Corrigir item {idx+1}", "callback_data": f"iredo:{new_id}:{idx}"}]],
                     )
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
             _ask_pack_size(chat_id, state_id, payload, idx)
