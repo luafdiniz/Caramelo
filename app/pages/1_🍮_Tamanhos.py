@@ -16,6 +16,19 @@ from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title, qty_fm
 
 CANAIS_DISPONIVEIS = ["Fornada", "Pronta Entrega", "Evento", "Encomenda"]
 
+# Sentinel option inside the canal multiselect that means "select all".
+# When present in the submitted list, the save handler expands it into
+# the full CANAIS_DISPONIVEIS set. Lives in the dropdown so we don't need
+# a separate button (the multiselect's built-in × already covers clear-all).
+_CANAL_SELECT_ALL = "__select_all__"
+
+
+def _fmt_canal_option(c: str) -> str:
+    """How each canal value is rendered in the multiselect dropdown."""
+    if c == _CANAL_SELECT_ALL:
+        return "✨ Marcar todos"
+    return c
+
 # Units that don't divide: 1 forma, 2 ovos, 3 dúzias. No fractional clicks here.
 INTEGER_UNITS = {"UN", "DZ", "PENTE", "PAR", "JOGO"}
 
@@ -173,24 +186,14 @@ with tab_list:
                     st.divider()
                     st.markdown("**✏️ Editar este tamanho**")
 
-                    # Quick canais toggles (must live OUTSIDE the form so they don't
-                    # auto-submit; they mutate the session_state value that the
-                    # multiselect inside the form reads from on the next render).
+                    # Initialize the multiselect's session_state from the row's
+                    # current canal value (will be read by the widget below).
                     canal_key = f"canal_ms_{row['id']}"
                     if canal_key not in st.session_state:
                         st.session_state[canal_key] = [
                             c for c in _parse_canais(row.get("canal") or "")
                             if c in CANAIS_DISPONIVEIS
                         ]
-                    qbc1, qbc2 = st.columns(2)
-                    with qbc1:
-                        if st.button("✓ Todos canais", key=f"sel_all_canal_{row['id']}", use_container_width=True):
-                            st.session_state[canal_key] = CANAIS_DISPONIVEIS.copy()
-                            st.rerun()
-                    with qbc2:
-                        if st.button("✗ Limpar canais", key=f"rem_all_canal_{row['id']}", use_container_width=True):
-                            st.session_state[canal_key] = []
-                            st.rerun()
 
                     with st.form(f"edit_{row['id']}"):
                         ec1, ec2 = st.columns(2)
@@ -207,18 +210,17 @@ with tab_list:
                                 value=int(row["rendimento"]) if pd.notna(row.get("rendimento")) else 1,
                             )
                         with ec2:
-                            # Initialize multiselect state from the row's current canal value
-                            canal_key = f"canal_ms_{row['id']}"
-                            if canal_key not in st.session_state:
-                                st.session_state[canal_key] = [
-                                    c for c in _parse_canais(row.get("canal") or "")
-                                    if c in CANAIS_DISPONIVEIS
-                                ]
+                            # Multiselect with a "✨ Marcar todos" sentinel option in
+                            # the dropdown. If submitted with the sentinel selected,
+                            # we expand it to all canals at save time below.
                             new_canal_list = st.multiselect(
                                 "Canal",
-                                CANAIS_DISPONIVEIS,
+                                [_CANAL_SELECT_ALL] + CANAIS_DISPONIVEIS,
                                 key=canal_key,
+                                format_func=_fmt_canal_option,
                             )
+                            if _CANAL_SELECT_ALL in new_canal_list:
+                                new_canal_list = list(CANAIS_DISPONIVEIS)
                             new_canal = ",".join(new_canal_list)
 
                         # Edit packaging: show current + allow add/remove
