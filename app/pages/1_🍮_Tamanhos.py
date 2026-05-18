@@ -122,18 +122,17 @@ with tab_list:
                 with col2:
                     m1, m2 = st.columns(2)
                     with m1:
-                        # Components above the sum, both columns symmetric.
-                        st.caption(
-                            f"Alimento {brl_md(row['custo_alimento'])}  \n"
-                            f"Embalagem {brl_md(row['custo_embalagem'])}"
-                        )
+                        # Two separate captions instead of a single one with a markdown
+                        # line break — `  \n` becomes <br> inside a single <p>, which
+                        # CSS margin can't separate. Two captions = two <p>s with
+                        # natural spacing both on desktop and mobile.
+                        st.caption(f"Alimento {brl_md(row['custo_alimento'])}")
+                        st.caption(f"Embalagem {brl_md(row['custo_embalagem'])}")
                         compact_kpi("Custo unitário", brl(row["custo_total"]), tight_top=True)
                     with m2:
                         if pd.notna(row.get("preco_venda")) and pd.notna(row.get("lucro")):
-                            st.caption(
-                                f"Lucro {brl_md(row['lucro'])}  \n"
-                                f"Margem {pct(row['margem'])}"
-                            )
+                            st.caption(f"Lucro {brl_md(row['lucro'])}")
+                            st.caption(f"Margem {pct(row['margem'])}")
                         else:
                             st.caption("⚠️ Preço a definir")
                         compact_kpi("Preço de venda", brl(row["preco_venda"]), tight_top=True)
@@ -193,27 +192,6 @@ with tab_list:
                             st.session_state[canal_key] = []
                             st.rerun()
 
-                    # Bulk-mark embalagem checkboxes via a single toggle. Lives OUTSIDE
-                    # the form so its on_change can mutate the per-row session_state
-                    # keys before the form re-renders. Checking it ticks every row's
-                    # 🗑️; unchecking clears them all.
-                    if not brk_emb.empty:
-                        bulk_key = f"bulk_rm_{row['id']}"
-                        _tamanho_id = row["id"]
-                        _pids_list = list(brk_emb["produto_id"])
-
-                        def _toggle_bulk_remove(tid=_tamanho_id, pids=_pids_list, bk=bulk_key):
-                            val = st.session_state.get(bk, False)
-                            for pid in pids:
-                                st.session_state[f"rm_{tid}_{pid}"] = val
-
-                        st.checkbox(
-                            "🗑️ Marcar/desmarcar todas pra remover",
-                            key=bulk_key,
-                            on_change=_toggle_bulk_remove,
-                            help="Atalho: marca = todas com 🗑️, desmarca = todas limpas.",
-                        )
-
                     with st.form(f"edit_{row['id']}"):
                         ec1, ec2 = st.columns(2)
                         with ec1:
@@ -246,6 +224,18 @@ with tab_list:
                         # Edit packaging: show current + allow add/remove
                         st.markdown("**Embalagens deste tamanho**")
                         st.caption("Ajuste a quantidade de cada uma. Marque 🗑️ ou zere o número pra remover.")
+
+                        # Bulk-remove shortcut — lives inside the form because Streamlit
+                        # forms don't fire on_change. Effect is applied at save time
+                        # rather than visually toggling each row's checkbox.
+                        bulk_rm = st.checkbox(
+                            "🗑️ Remover TODAS as embalagens deste tamanho",
+                            key=f"bulk_rm_{row['id']}",
+                            help="Atalho. Ao salvar, todas as embalagens listadas abaixo serão removidas.",
+                        )
+                        if bulk_rm:
+                            st.warning("⚠️ Ao clicar em Salvar, todas as embalagens abaixo serão removidas.")
+
                         current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
 
                         edited_qtys = {}
@@ -343,8 +333,13 @@ with tab_list:
                                 ).execute().get("values", [])
                                 kept = [r for r in emb_all if r and r[0] != row["id"]]
 
-                                # Append new packaging rows for this tamanho
-                                final_pkgs = [(pid, q) for pid, q in edited_qtys.items() if q > 0]
+                                # Append new packaging rows for this tamanho.
+                                # The bulk-remove shortcut wins over any individual
+                                # qty: if checked, zero everything out at save.
+                                if bulk_rm:
+                                    final_pkgs = []
+                                else:
+                                    final_pkgs = [(pid, q) for pid, q in edited_qtys.items() if q > 0]
                                 for pid, q in final_pkgs:
                                     kept.append([row["id"], pid, "", q])
 
