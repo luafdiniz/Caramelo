@@ -185,6 +185,73 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
         _handle_compra_callback(chat_id, message_id, state_id, payload, parts, service)
         return
 
+    # Correct a specific item that was auto-resolved (via memória) or already decided
+    if action == "iredo":
+        idx = int(parts[2])
+        if not _force_reask_item(payload, idx):
+            tg.edit_message_text(chat_id, message_id, "❌ Item inválido.", reply_markup=None)
+            return
+        # Also delete the stale alias so it doesn't auto-resolve again on the
+        # next receipt with the same text.
+        try:
+            item_desc = payload["itens"][idx].get("original_descricao") or payload["itens"][idx].get("descricao", "")
+            if item_desc:
+                aliases.delete(_spreadsheet_id(), "PRODUTO", item_desc, service=service)
+        except Exception:
+            pass
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"↩️ Voltando ao item {idx + 1} pra corrigir...",
+            reply_markup=None,
+        )
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        _next_step(chat_id, new_state_id, payload, service=service)
+        return
+
+    # Show a sub-menu listing each resolved item — user picks which one to correct.
+    if action == "iedit":
+        resolved = payload.get("items_resolved", [])
+        itens = payload.get("itens", [])
+        edit_buttons = []
+        for i, r in enumerate(resolved):
+            if r is None:
+                continue
+            desc = itens[i].get("descricao", "?")
+            if len(desc) > 30:
+                desc = desc[:27] + "…"
+            if r["action"] == "skip":
+                tag = "⏭"
+            elif r["action"] == "create":
+                tag = "➕"
+            else:
+                tag = "✓"
+            label = f"{tag} {i+1}: {desc}"
+            edit_buttons.append([{"text": label, "callback_data": f"iredo:{state_id}:{i}"}])
+        if not edit_buttons:
+            tg.edit_message_text(chat_id, message_id, "Nada resolvido ainda pra editar.", reply_markup=None)
+            return
+        edit_buttons.append([{"text": "← Voltar ao resumo", "callback_data": f"iedit_back:{state_id}"}])
+        import requests as _req
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        _req.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "✏️ Qual item você quer corrigir?",
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": edit_buttons},
+            },
+            timeout=10,
+        )
+        return
+
+    if action == "iedit_back":
+        tg.edit_message_text(chat_id, message_id, "↩️ Voltando ao resumo...", reply_markup=None)
+        _ask_final(chat_id, state_id, payload)
+        return
+
     # Undo last decision (item resolution or pack_size confirmation)
     if action == "voltar":
         undone_idx = _undo_last_decision(payload)
@@ -495,34 +562,37 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
     resolved = payload.get("items_resolved", [])
     for idx, item in enumerate(itens):
         res = resolved[idx]
+        force_review = item.get("force_review", False)
 
         # Stage A — product resolution
         if res is None:
             prod = item.get("produto_match")
 
-            if item.get("alias_skip"):
+            if not force_review and item.get("alias_skip"):
                 payload["items_resolved"][idx] = {"action": "skip", "reason": "alias_skip"}
-                tg.send_message(
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+                tg.send_message_with_buttons(
                     chat_id,
                     f"🤖 Item {idx+1} ignorado: <i>{_esc(item.get('descricao', '?'))}</i> (via memória)",
+                    [[{"text": f"↩️ Corrigir item {idx+1}", "callback_data": f"iredo:{new_id}:{idx}"}]],
                 )
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
-            if prod and prod.get("from_alias"):
+            if not force_review and prod and prod.get("from_alias"):
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
-                tg.send_message(
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+                tg.send_message_with_buttons(
                     chat_id,
                     f"🤖 Item {idx+1} reconhecido: <b>{_esc(prod['nome'])}</b> (via memória)",
+                    [[{"text": f"↩️ Corrigir item {idx+1}", "callback_data": f"iredo:{new_id}:{idx}"}]],
                 )
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
 
-            if prod and prod.get("match_confidence") == "alta":
+            if not force_review and prod and prod.get("match_confidence") == "alta":
                 payload["items_resolved"][idx] = {"action": "use", "produto_id": prod["id"]}
                 state.delete_state(_spreadsheet_id(), state_id, service=service)
                 new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
@@ -538,20 +608,21 @@ def _next_step(chat_id: int, state_id: str, payload: dict, service=None) -> None
         if "pack_size" not in res:
             # Try alias-stored pack_size
             alias_pack = item.get("alias_pack_size")
-            if alias_pack:
+            if not force_review and alias_pack:
                 res["pack_size"] = int(alias_pack)
                 qtde = float(item.get("qtde_embalagens", 1) or 1)
                 preco_total = float(item.get("preco_total", 0) or 0)
                 total_un = qtde * int(alias_pack)
                 unit_price = preco_total / total_un if total_un > 0 else 0
+                state.delete_state(_spreadsheet_id(), state_id, service=service)
+                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 if int(alias_pack) > 1:
-                    tg.send_message(
+                    tg.send_message_with_buttons(
                         chat_id,
                         f"🤖 Item {idx+1}: {int(alias_pack)} un por embalagem "
                         f"(via memória) — R$ {unit_price:.2f}/un",
+                        [[{"text": f"↩️ Corrigir item {idx+1}", "callback_data": f"iredo:{new_id}:{idx}"}]],
                     )
-                state.delete_state(_spreadsheet_id(), state_id, service=service)
-                new_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
                 _next_step(chat_id, new_id, payload, service=service)
                 return
             _ask_pack_size(chat_id, state_id, payload, idx)
@@ -778,6 +849,7 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
         [{"text": f"💾 Salvar {len(included)} compra(s)", "callback_data": f"save:{state_id}"}],
     ]
     if _can_undo(payload):
+        buttons.append([{"text": "✏️ Editar um item", "callback_data": f"iedit:{state_id}"}])
         buttons.append([{"text": "↩️ Voltar (desfazer última)", "callback_data": f"voltar:{state_id}"}])
     buttons.append([{"text": "❌ Cancelar", "callback_data": f"cancel:{state_id}"}])
     tg.send_message_with_buttons(chat_id, "\n".join(lines), buttons)
@@ -1025,6 +1097,25 @@ def _can_undo(payload: dict) -> bool:
     return any(r is not None for r in payload.get("items_resolved", []))
 
 
+def _force_reask_item(payload: dict, idx: int) -> bool:
+    """Reset one item to the product question stage (clear alias/from_alias flags).
+
+    Returns True if it acted, False if the index is out of range.
+    """
+    resolved = payload.get("items_resolved", [])
+    itens = payload.get("itens", [])
+    if idx < 0 or idx >= len(resolved):
+        return False
+    resolved[idx] = None
+    item = itens[idx]
+    item.pop("alias_skip", None)
+    item.pop("alias_pack_size", None)
+    if isinstance(item.get("produto_match"), dict):
+        item["produto_match"].pop("from_alias", None)
+    item["force_review"] = True
+    return True
+
+
 def _undo_last_decision(payload: dict):
     """Revert the most recent decision and return its item index (or None).
 
@@ -1043,9 +1134,7 @@ def _undo_last_decision(payload: dict):
     # 2. Latest product decision (use/create/skip)
     for idx in range(len(resolved) - 1, -1, -1):
         if resolved[idx] is not None:
-            payload["items_resolved"][idx] = None
-            payload["itens"][idx].pop("alias_skip", None)
-            payload["itens"][idx]["force_review"] = True
+            _force_reask_item(payload, idx)
             return idx
     return None
 

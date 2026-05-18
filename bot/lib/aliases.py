@@ -144,7 +144,34 @@ def save(
             ).execute()
         return ""
 
-    # Create new row.
+    return _create_new_alias(spreadsheet_id, tipo, text, resolved_id, pack_size, service)
+
+
+def delete(spreadsheet_id: str, tipo: str, text: str, service=None) -> bool:
+    """
+    Wipe an alias row matching (tipo, normalized text). Returns True if deleted.
+
+    Used when the user explicitly corrects a previously-learned association —
+    next time the same receipt text comes in it should be matched fresh, not
+    auto-resolved by the stale memory.
+    """
+    service = service or get_service()
+    ensure_sheet(spreadsheet_id, service=service)
+    target = _norm(text)
+    if not target:
+        return False
+    existing = _get_all_with_row_indices(spreadsheet_id, service=service)
+    for row_idx, a in existing:
+        if a["tipo"] == tipo and _norm(a["texto_original"]) == target:
+            service.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range=f"{ALIASES_SHEET}!A{row_idx}:F{row_idx}",
+            ).execute()
+            return True
+    return False
+
+
+def _create_new_alias(spreadsheet_id, tipo, text, resolved_id, pack_size, service):
     new_id = _next_id_for_prefix(spreadsheet_id, f"{ALIASES_SHEET}!A:A", "A", service=service)
     result = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id, range=f"{ALIASES_SHEET}!A:A"
