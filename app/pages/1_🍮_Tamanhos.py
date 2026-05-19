@@ -180,15 +180,57 @@ with tab_list:
                             f"**{brl_md(custo_ali)} por unidade**"
                         )
 
-                    # Embalagens breakdown is needed below by the edit form to
-                    # know which packages are already attached to this tamanho.
-                    # The read-only table that used to live here was removed —
-                    # the edit form below is now the single source of truth.
+                    # --- Embalagens — read-only view (brand-styled, matches the
+                    # Ingredientes table above). Editing happens in the form below,
+                    # gated by an "Editar embalagens" toggle so the data_editor only
+                    # appears when actively editing.
                     custo_emb, brk_emb = data.calc_custo_embalagem_unid(row["id"])
+                    st.markdown("**📦 Embalagens deste tamanho**")
+                    if not brk_emb.empty:
+                        disp_emb = brk_emb[[
+                            "produto_id", "produto_nome", "qtde_por_unidade",
+                            "preco_unit_atual", "custo_por_unidade",
+                        ]].copy()
+                        disp_emb["qtde_por_unidade"] = disp_emb["qtde_por_unidade"].apply(qty_fmt)
+                        disp_emb["preco_unit_atual"] = disp_emb["preco_unit_atual"].apply(brl)
+                        disp_emb["custo_por_unidade"] = disp_emb["custo_por_unidade"].apply(brl)
+                        disp_emb.columns = ["Produto", "Nome", "Qtde", "Preço unit.", "Custo por unidade"]
+                        st.table(disp_emb.set_index("Produto"))
+                        st.caption(
+                            f"Total embalagem por unidade: **{brl_md(custo_emb)}**"
+                        )
+                    else:
+                        st.caption("Nenhuma embalagem cadastrada pra esse tamanho.")
 
                     # --- Edit section ---
                     st.divider()
                     st.markdown("**✏️ Editar este tamanho**")
+
+                    # Toggle: by default, embalagens are read-only (rendered above).
+                    # Click "Editar embalagens" to swap the section inside the form
+                    # below to the editable data_editor. Lives OUTSIDE the form
+                    # because Streamlit forms don't fire on_change until submit.
+                    emb_edit_key = f"emb_edit_mode_{row['id']}"
+                    if emb_edit_key not in st.session_state:
+                        st.session_state[emb_edit_key] = False
+                    embalagens_edit_active = st.session_state[emb_edit_key]
+
+                    if not embalagens_edit_active:
+                        if st.button(
+                            "✏️ Editar embalagens",
+                            key=f"emb_edit_toggle_{row['id']}",
+                            help="Abre o modo de edição (adicionar/remover/ajustar qtde).",
+                        ):
+                            st.session_state[emb_edit_key] = True
+                            st.rerun()
+                    else:
+                        st.info("✏️ Modo de edição de embalagens **ativo**. Use o Salvar do formulário abaixo pra confirmar, ou cancela.")
+                        if st.button(
+                            "✖ Cancelar edição de embalagens",
+                            key=f"emb_edit_cancel_{row['id']}",
+                        ):
+                            st.session_state[emb_edit_key] = False
+                            st.rerun()
 
                     # Initialize the multiselect's session_state from the row's
                     # current canal value (will be read by the widget below).
@@ -263,146 +305,131 @@ with tab_list:
                             new_canal_list = list(CANAIS_DISPONIVEIS)
                         new_canal = ",".join(new_canal_list)
 
-                        # Edit packaging: single integrated section — add at the
-                        # top, then list & edit existing ones below.
-                        st.markdown("**Embalagens deste tamanho**")
-                        st.caption("Use o menu pra adicionar. Ajuste a quantidade ou marque 🗑️ pra remover.")
+                        # Embalagens editing is gated by the toggle outside the form.
+                        # When OFF (default): the data_editor is hidden — the
+                        # read-only st.table above already shows the current state.
+                        # When ON: full editor (multiselect + data_editor + bulk_rm).
+                        edited_qtys: dict = {}
+                        bulk_rm = False
 
-                        # Bulk-remove shortcut — lives inside the form because Streamlit
-                        # forms don't fire on_change. Effect is applied at save time
-                        # rather than visually toggling each row's checkbox.
-                        # Aligned to the right column to match the per-row 🗑️ position.
-                        bc1, bc2 = st.columns([5, 1])
-                        with bc1:
-                            st.markdown(
-                                '<div style="text-align: right; padding-top: 0.45rem;">Selecionar todos</div>',
-                                unsafe_allow_html=True,
+                        if embalagens_edit_active:
+                            st.markdown("**Embalagens deste tamanho** (em edição)")
+                            st.caption("Use o menu pra adicionar. Ajuste a quantidade ou marque 🗑️ pra remover.")
+
+                            # Bulk-remove shortcut — applied at save time.
+                            bc1, bc2 = st.columns([5, 1])
+                            with bc1:
+                                st.markdown(
+                                    '<div style="text-align: right; padding-top: 0.45rem;">Selecionar todos</div>',
+                                    unsafe_allow_html=True,
+                                )
+                            with bc2:
+                                bulk_rm = st.checkbox(
+                                    "Selecionar todos",
+                                    key=f"bulk_rm_{row['id']}",
+                                    label_visibility="collapsed",
+                                    help="Marca todos pra remover ao salvar.",
+                                )
+                            if bulk_rm:
+                                st.warning("⚠️ Ao clicar em Salvar, todas as embalagens abaixo serão removidas.")
+
+                            current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
+
+                            # --- Add new packaging (TOP) ---
+                            _cat_order = {"FOR": 0, "EMB": 1, "GRA": 2}
+                            all_pkg_opts = produtos_df[produtos_df["categoria"].isin(_cat_order.keys())].copy() if not produtos_df.empty else pd.DataFrame()
+                            if not all_pkg_opts.empty:
+                                all_pkg_opts["_co"] = all_pkg_opts["categoria"].map(_cat_order)
+                                all_pkg_opts = all_pkg_opts.sort_values(["_co", "nome"]).drop(columns=["_co"])
+                            already_in = set(current_pkgs["produto_id"].tolist())
+                            new_pkg_opts = all_pkg_opts[~all_pkg_opts["id"].isin(already_in)]
+                            new_pkg_opts["label"] = new_pkg_opts["id"] + " — " + new_pkg_opts["nome"]
+                            added_pkgs = st.multiselect(
+                                "Adicionar novas embalagens",
+                                options=new_pkg_opts["id"].tolist(),
+                                format_func=lambda x: new_pkg_opts[new_pkg_opts["id"] == x]["label"].iloc[0],
+                                key=f"add_pkg_{row['id']}",
                             )
-                        with bc2:
-                            bulk_rm = st.checkbox(
-                                "Selecionar todos",
-                                key=f"bulk_rm_{row['id']}",
-                                label_visibility="collapsed",
-                                help="Marca todos pra remover ao salvar.",
+
+                            # --- Build the editable table: existing packages + newly picked ones. ---
+                            name_by_id = dict(zip(all_pkg_opts["id"], all_pkg_opts["nome"])) if not all_pkg_opts.empty else {}
+
+                            editor_rows = []
+                            for _, pkg in current_pkgs.iterrows():
+                                raw_val = pkg.get("qtde_por_unidade")
+                                qval = float(raw_val) if pd.notna(raw_val) else 1.0
+                                pid = pkg["produto_id"]
+                                preco_unit = data.latest_unit_price(pid)
+                                editor_rows.append({
+                                    "ID": pid,
+                                    "Nome": pkg["produto_nome"],
+                                    "Qtde": qval,
+                                    "Preço unit.": float(preco_unit) if preco_unit else 0.0,
+                                    "Custo": float(qval * (preco_unit or 0.0)),
+                                    "Remover": False,
+                                })
+                            for npkg in added_pkgs:
+                                preco_unit = data.latest_unit_price(npkg)
+                                editor_rows.append({
+                                    "ID": npkg,
+                                    "Nome": name_by_id.get(npkg, ""),
+                                    "Qtde": 1.0,
+                                    "Preço unit.": float(preco_unit) if preco_unit else 0.0,
+                                    "Custo": float(preco_unit or 0.0),
+                                    "Remover": False,
+                                })
+
+                            emb_df = pd.DataFrame(
+                                editor_rows,
+                                columns=["ID", "Nome", "Qtde", "Preço unit.", "Custo", "Remover"],
                             )
-                        if bulk_rm:
-                            st.warning("⚠️ Ao clicar em Salvar, todas as embalagens abaixo serão removidas.")
 
-                        current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
-
-                        # --- Add new packaging (TOP) ---
-                        # Sort FOR first, then EMB, alphabetic by name within each.
-                        _cat_order = {"FOR": 0, "EMB": 1, "GRA": 2}
-                        all_pkg_opts = produtos_df[produtos_df["categoria"].isin(_cat_order.keys())].copy() if not produtos_df.empty else pd.DataFrame()
-                        if not all_pkg_opts.empty:
-                            all_pkg_opts["_co"] = all_pkg_opts["categoria"].map(_cat_order)
-                            all_pkg_opts = all_pkg_opts.sort_values(["_co", "nome"]).drop(columns=["_co"])
-                        already_in = set(current_pkgs["produto_id"].tolist())
-                        new_pkg_opts = all_pkg_opts[~all_pkg_opts["id"].isin(already_in)]
-                        new_pkg_opts["label"] = new_pkg_opts["id"] + " — " + new_pkg_opts["nome"]
-                        added_pkgs = st.multiselect(
-                            "Adicionar novas embalagens",
-                            options=new_pkg_opts["id"].tolist(),
-                            format_func=lambda x: new_pkg_opts[new_pkg_opts["id"] == x]["label"].iloc[0],
-                            key=f"add_pkg_{row['id']}",
-                        )
-
-                        # --- Build the editable table: existing packages + newly picked ones. ---
-                        # Lookup produto name for the newly-added IDs (the multiselect
-                        # only returns IDs).
-                        if not all_pkg_opts.empty:
-                            name_by_id = dict(zip(all_pkg_opts["id"], all_pkg_opts["nome"]))
-                        else:
-                            name_by_id = {}
-
-                        editor_rows = []
-                        for _, pkg in current_pkgs.iterrows():
-                            raw_val = pkg.get("qtde_por_unidade")
-                            qval = float(raw_val) if pd.notna(raw_val) else 1.0
-                            pid = pkg["produto_id"]
-                            preco_unit = data.latest_unit_price(pid)
-                            editor_rows.append({
-                                "ID": pid,
-                                "Nome": pkg["produto_nome"],
-                                "Qtde": qval,
-                                "Preço unit.": float(preco_unit) if preco_unit else 0.0,
-                                "Custo": float(qval * (preco_unit or 0.0)),
-                                "Remover": False,
-                            })
-                        for npkg in added_pkgs:
-                            preco_unit = data.latest_unit_price(npkg)
-                            editor_rows.append({
-                                "ID": npkg,
-                                "Nome": name_by_id.get(npkg, ""),
-                                "Qtde": 1.0,
-                                "Preço unit.": float(preco_unit) if preco_unit else 0.0,
-                                "Custo": float(preco_unit or 0.0),
-                                "Remover": False,
-                            })
-
-                        emb_df = pd.DataFrame(
-                            editor_rows,
-                            columns=["ID", "Nome", "Qtde", "Preço unit.", "Custo", "Remover"],
-                        )
-
-                        edited_emb_df = st.data_editor(
-                            emb_df,
-                            key=f"emb_editor_{row['id']}",
-                            hide_index=True,
-                            use_container_width=True,
-                            num_rows="fixed",
-                            disabled=["ID", "Nome", "Preço unit.", "Custo"],
-                            column_config={
-                                "ID": st.column_config.TextColumn("ID", width="small"),
-                                "Nome": st.column_config.TextColumn("Nome", width="large"),
-                                "Qtde": st.column_config.NumberColumn(
-                                    "Qtde",
-                                    min_value=0,
-                                    step=0.05,
-                                    format="%.2f",
-                                ),
-                                "Preço unit.": st.column_config.NumberColumn(
-                                    "Preço unit.",
-                                    format="R$ %.2f",
-                                    help="Preço unitário mais recente do insumo. Mude pela página de Insumos.",
-                                ),
-                                "Custo": st.column_config.NumberColumn(
-                                    "Custo",
-                                    format="R$ %.2f",
-                                    help="Qtde × Preço unitário. Recalcula ao Salvar.",
-                                ),
-                                "Remover": st.column_config.CheckboxColumn(
-                                    "Remover",
-                                    help="Marca pra remover essa embalagem ao salvar.",
-                                    width="small",
-                                ),
-                            },
-                        )
-
-                        # Build edited_qtys from the data_editor output.
-                        # Integer-unit produtos (UN, DZ, etc.) get rounded back to int on save.
-                        edited_qtys = {}
-                        if not edited_emb_df.empty:
-                            for _, r in edited_emb_df.iterrows():
-                                pid = r["ID"]
-                                if r["Remover"]:
-                                    edited_qtys[pid] = 0
-                                    continue
-                                _, _, _, is_int = _qty_input_params(pid, produtos_df)
-                                qv = float(r["Qtde"]) if pd.notna(r["Qtde"]) else 0.0
-                                edited_qtys[pid] = int(round(qv)) if is_int else qv
-
-                        # Total geral de custo de embalagem por unidade — soma das
-                        # linhas que NÃO estão marcadas pra remover. Útil pra
-                        # conferir o número antes de salvar.
-                        if not edited_emb_df.empty:
-                            mask_keep = ~edited_emb_df["Remover"].astype(bool)
-                            total_emb_unid = float(
-                                pd.to_numeric(edited_emb_df.loc[mask_keep, "Custo"], errors="coerce").fillna(0).sum()
+                            edited_emb_df = st.data_editor(
+                                emb_df,
+                                key=f"emb_editor_{row['id']}",
+                                hide_index=True,
+                                use_container_width=True,
+                                num_rows="fixed",
+                                disabled=["ID", "Nome", "Preço unit.", "Custo"],
+                                column_config={
+                                    "ID": st.column_config.TextColumn("ID", width="small"),
+                                    "Nome": st.column_config.TextColumn("Nome", width="large"),
+                                    "Qtde": st.column_config.NumberColumn(
+                                        "Qtde", min_value=0, step=0.05, format="%.2f",
+                                    ),
+                                    "Preço unit.": st.column_config.NumberColumn(
+                                        "Preço unit.", format="R$ %.2f",
+                                        help="Preço unitário mais recente do insumo. Mude pela página de Insumos.",
+                                    ),
+                                    "Custo": st.column_config.NumberColumn(
+                                        "Custo", format="R$ %.2f",
+                                        help="Qtde × Preço unitário. Recalcula ao Salvar.",
+                                    ),
+                                    "Remover": st.column_config.CheckboxColumn(
+                                        "Remover", width="small",
+                                        help="Marca pra remover essa embalagem ao salvar.",
+                                    ),
+                                },
                             )
-                            st.caption(
-                                f"**Total embalagem por unidade: {brl_md(total_emb_unid)}**"
-                            )
+
+                            # Build edited_qtys from the data_editor output.
+                            if not edited_emb_df.empty:
+                                for _, r in edited_emb_df.iterrows():
+                                    pid = r["ID"]
+                                    if r["Remover"]:
+                                        edited_qtys[pid] = 0
+                                        continue
+                                    _, _, _, is_int = _qty_input_params(pid, produtos_df)
+                                    qv = float(r["Qtde"]) if pd.notna(r["Qtde"]) else 0.0
+                                    edited_qtys[pid] = int(round(qv)) if is_int else qv
+
+                                mask_keep = ~edited_emb_df["Remover"].astype(bool)
+                                total_emb_unid = float(
+                                    pd.to_numeric(edited_emb_df.loc[mask_keep, "Custo"], errors="coerce").fillna(0).sum()
+                                )
+                                st.caption(
+                                    f"**Total embalagem por unidade: {brl_md(total_emb_unid)}**"
+                                )
 
                         if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
                             try:
@@ -412,8 +439,10 @@ with tab_list:
                                 # Auto-include relacionados: if any selected produto has related
                                 # IDs configured in the Produtos.Relacionados column, add them
                                 # too (default qty 1) before saving.
+                                # Only runs when the user is actively editing embalagens —
+                                # otherwise edited_qtys is empty and we'd add nothing anyway.
                                 auto_added = []
-                                if not produtos_df.empty:
+                                if embalagens_edit_active and not produtos_df.empty:
                                     for pid in list(edited_qtys.keys()):
                                         prod_row = produtos_df[produtos_df["id"] == pid]
                                         if prod_row.empty:
@@ -456,42 +485,48 @@ with tab_list:
                                         body={"values": [[new_receita_id or ""]]},
                                     ).execute()
 
-                                # Replace Embalagens_Por_Tamanho rows: delete old, insert new
-                                emb_all = service.spreadsheets().values().get(
-                                    spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
-                                ).execute().get("values", [])
-                                kept = [r for r in emb_all if r and r[0] != row["id"]]
+                                # Replace Embalagens_Por_Tamanho rows ONLY if the user
+                                # entered edit mode for embalagens. When OFF, the section
+                                # is just the read-only st.table view — leave the
+                                # existing data alone.
+                                if embalagens_edit_active:
+                                    emb_all = service.spreadsheets().values().get(
+                                        spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
+                                    ).execute().get("values", [])
+                                    kept = [r for r in emb_all if r and r[0] != row["id"]]
 
-                                # Append new packaging rows for this tamanho.
-                                # The bulk-remove shortcut wins over any individual
-                                # qty: if checked, zero everything out at save.
-                                if bulk_rm:
-                                    final_pkgs = []
-                                else:
-                                    final_pkgs = [(pid, q) for pid, q in edited_qtys.items() if q > 0]
-                                for pid, q in final_pkgs:
-                                    kept.append([row["id"], pid, "", q])
+                                    # Append new packaging rows for this tamanho.
+                                    # The bulk-remove shortcut wins over any individual
+                                    # qty: if checked, zero everything out at save.
+                                    if bulk_rm:
+                                        final_pkgs = []
+                                    else:
+                                        final_pkgs = [(pid, q) for pid, q in edited_qtys.items() if q > 0]
+                                    for pid, q in final_pkgs:
+                                        kept.append([row["id"], pid, "", q])
 
-                                # Clear and rewrite the entire block
-                                service.spreadsheets().values().clear(
-                                    spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
-                                ).execute()
-                                if kept:
-                                    # Re-render VLOOKUP for column C
-                                    rewritten = []
-                                    for i, r in enumerate(kept):
-                                        rn = i + 2
-                                        rewritten.append([
-                                            r[0], r[1],
-                                            f"=VLOOKUP(B{rn};Produtos!A:B;2;FALSE)",
-                                            r[3],
-                                        ])
-                                    service.spreadsheets().values().update(
-                                        spreadsheetId=ssid,
-                                        range="Embalagens_Por_Tamanho!A2",
-                                        valueInputOption="USER_ENTERED",
-                                        body={"values": rewritten},
+                                    # Clear and rewrite the entire block
+                                    service.spreadsheets().values().clear(
+                                        spreadsheetId=ssid, range="Embalagens_Por_Tamanho!A2:D"
                                     ).execute()
+                                    if kept:
+                                        # Re-render VLOOKUP for column C
+                                        rewritten = []
+                                        for i, r in enumerate(kept):
+                                            rn = i + 2
+                                            rewritten.append([
+                                                r[0], r[1],
+                                                f"=VLOOKUP(B{rn};Produtos!A:B;2;FALSE)",
+                                                r[3],
+                                            ])
+                                        service.spreadsheets().values().update(
+                                            spreadsheetId=ssid,
+                                            range="Embalagens_Por_Tamanho!A2",
+                                            valueInputOption="USER_ENTERED",
+                                            body={"values": rewritten},
+                                        ).execute()
+                                    # Reset toggle so save returns to view mode.
+                                    st.session_state[emb_edit_key] = False
 
                                 data.invalidate_cache()
                                 if auto_added:
