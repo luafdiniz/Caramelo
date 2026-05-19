@@ -163,7 +163,9 @@ with tab_list:
             "Novo preço": [None] * len(filtered),
             "Compras": [int(n) for n in filtered["n_compras"].values],
             "Última": [
-                (d.date() if d is not None and pd.notna(d) else None)
+                # filtered["ultima_data"].values yields numpy.datetime64 — wrap
+                # in pd.Timestamp so .date() works regardless of underlying dtype.
+                (pd.Timestamp(d).date() if d is not None and pd.notna(d) else None)
                 for d in filtered["ultima_data"].values
             ],
             "Notas": [(n or "") for n in filtered["notas"].values],
