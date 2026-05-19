@@ -340,12 +340,16 @@ with tab_tabela:
                     st.rerun()
             else:
                 # --- EDIT MODE ---
-                st.info("✏️ Modo de edição **ativo**. Clique em Salvar pra confirmar, ou Cancelar pra desistir.")
+                st.info(
+                    "✏️ Modo de edição **ativo**. Clique em Salvar pra confirmar, "
+                    "ou Cancelar pra desistir. ⚠️ Se você trocar de aba sem salvar, "
+                    "as alterações não vão persistir."
+                )
                 if st.button("✖ Cancelar edição", key="ins_tabela_cancel_btn"):
                     st.session_state[ins_edit_key] = False
                     st.rerun()
 
-                    editor_df = pd.DataFrame({
+                editor_df = pd.DataFrame({
                     "ID": base_filtered["id"].values,
                     "🍯": [CAT_EMOJI.get(c, "•") for c in base_filtered["categoria"].values],
                     "Insumo": [(n or "") for n in base_filtered["nome"].values],

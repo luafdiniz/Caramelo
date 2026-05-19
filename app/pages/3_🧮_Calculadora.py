@@ -111,11 +111,19 @@ if preset_key == "custo_e_margem":
         ) or None
     out = calc.solve_custo_e_margem(base)
     st.markdown("##### Resultado")
+    st.caption("**Por unidade**")
     _kpi_block(out, [
-        ("qtde_unidades_produzidas", "Unidades produzidas", "qtde"),
         ("custo_unit", "Custo por unidade", "brl"),
         ("lucro_unit", "Lucro por unidade", "brl"),
         ("margem", "Margem", "pct"),
+        ("preco_venda_kg", "Preço por kg", "brl"),
+    ])
+    st.caption("**Total da fornada**")
+    _kpi_block(out, [
+        ("qtde_unidades_produzidas", "Unidades produzidas", "qtde"),
+        ("custo_total", "Custo total", "brl"),
+        ("faturamento", "Faturamento", "brl"),
+        ("lucro_total", "Lucro total", "brl"),
     ])
 
 elif preset_key == "preco_para_margem":
@@ -131,11 +139,25 @@ elif preset_key == "preco_para_margem":
         )
     out = calc.solve_preco_para_margem(base, margem_alvo=margem_alvo_pct / 100)
     st.markdown("##### Resultado")
+    # Por unidade
+    st.caption("**Por unidade**")
     _kpi_block(out, [
         ("custo_unit", "Custo por unidade", "brl"),
         ("preco_venda_unit", "Preço de venda sugerido", "brl"),
         ("lucro_unit", "Lucro por unidade", "brl"),
         ("preco_venda_kg", "Preço por kg", "brl"),
+    ])
+    # Totais da fornada (peso_base_receita inteiro)
+    st.caption(
+        f"**Total da fornada** ({out.qtde_unidades_produzidas:.2f} unidades de "
+        f"{(base.peso_unit or 0):.2f} kg cada)"
+        if out.qtde_unidades_produzidas else "**Total da fornada**"
+    )
+    _kpi_block(out, [
+        ("qtde_unidades_produzidas", "Unidades produzidas", "qtde"),
+        ("custo_total", "Custo total", "brl"),
+        ("faturamento", "Faturamento", "brl"),
+        ("lucro_total", "Lucro total", "brl"),
     ])
 
 elif preset_key == "qtde_para_faturar":
@@ -170,6 +192,11 @@ elif preset_key == "kg_com_orcamento":
         )
     out = calc.solve_kg_com_orcamento(base)
     st.markdown("##### Resultado")
+    if base.preco_venda_unit:
+        st.caption(
+            f"Faturamento e lucro calculados com **preço atual de R$ {base.preco_venda_unit:.2f}/unidade** "
+            f"(vem do Tamanho selecionado)."
+        )
     _kpi_block(out, [
         ("peso_base_receita", "Massa que dá pra produzir (kg)", "qtde"),
         ("qtde_unidades_produzidas", "Unidades possíveis", "qtde"),
@@ -263,13 +290,11 @@ if preset_key == "custo_e_margem" and tamanho_id and out.preco_venda_unit:
             st.error(f"Erro: {e}")
 
 
-with st.expander("🔍 Memória de cálculo"):
-    st.markdown(
-        "**Base usada:**\n"
-        f"- Peso unitário: {base.peso_unit}\n"
-        f"- Peso da receita padrão (base): {base.peso_base_padrao}\n"
-        f"- Custo de ingredientes da receita padrão: {base.custo_ingredientes_padrao}\n"
-        f"- Custo de embalagem por unidade: {base.custo_embalagem_unit}\n"
-        f"- Preço de venda atual: {base.preco_venda_unit}"
+if tamanho_id:
+    st.caption(
+        f"💡 Cálculos baseados em **{tamanho_id}** — peso unitário "
+        f"{(base.peso_unit or 0):.2f} kg · custo ingredientes "
+        f"{brl((base.custo_ingredientes_padrao or 0))} · custo embalagem por unidade "
+        f"{brl(base.custo_embalagem_unit or 0)} · preço de venda cadastrado "
+        f"{brl(base.preco_venda_unit) if base.preco_venda_unit else '—'}."
     )
-    st.markdown("**Equações usadas estão em `app/lib/calc.py`.**")

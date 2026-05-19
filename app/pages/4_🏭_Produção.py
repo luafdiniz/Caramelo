@@ -132,6 +132,11 @@ with tab_new:
                 })
 
     # Summary
+    if not rows_data:
+        st.info(
+            "💡 Preencha **Produzidos ≥ 1** em pelo menos um tamanho pra "
+            "habilitar o botão de salvar fornada."
+        )
     if rows_data:
         df = pd.DataFrame(rows_data)
         total_produzidos = df["produzidos"].sum()
