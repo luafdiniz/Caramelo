@@ -128,12 +128,15 @@ def get_fornecedores() -> pd.DataFrame:
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def get_tamanhos() -> pd.DataFrame:
     service = get_service()
+    # Range extended to column I to pick up the optional `receita_id` added by
+    # the receitas migration. If the column isn't there yet, the row stays
+    # padded with "" and `receita_id` falls back to the padrao at calc time.
     result = service.spreadsheets().values().get(
-        spreadsheetId=_spreadsheet_id(), range="Tamanhos!A2:H",
+        spreadsheetId=_spreadsheet_id(), range="Tamanhos!A2:I",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
     rows = result.get("values", [])
-    cols = ["id", "nome", "peso_kg", "volume_ml", "rendimento", "canal", "preco_venda", "notas"]
+    cols = ["id", "nome", "peso_kg", "volume_ml", "rendimento", "canal", "preco_venda", "notas", "receita_id"]
     if not rows:
         return pd.DataFrame(columns=cols)
     # Pad/truncate each row to exactly len(cols)
@@ -183,21 +186,135 @@ def get_compras() -> pd.DataFrame:
     return df
 
 
+# --- Receitas (new schema) --------------------------------------------------
+# Schema v2: a Receitas tab lists named recipes (REC-NNN), and a
+# Receita_Ingredientes tab holds their ingredients keyed by (receita_id,
+# produto_id) plus a `componente` ("calda" or "massa"). One receita in
+# Receitas carries padrao=TRUE — that's the fallback when a Tamanho has
+# no receita_id of its own.
+#
+# Pre-migration shim: if Receita_Ingredientes does not exist yet, we silently
+# fall back to reading the legacy `Receita` tab and synthesizing a single
+# REC-001 receita. This keeps the app running before
+# `scripts/migrate_receitas.py --apply` is executed. Delete the shim once
+# the migration has run everywhere.
+
+
+def _has_sheet(sheet_name: str) -> bool:
+    """True if a tab with this exact title exists. Used for the migration shim."""
+    service = get_service()
+    meta = service.spreadsheets().get(spreadsheetId=_spreadsheet_id()).execute()
+    return any(s["properties"]["title"] == sheet_name for s in meta["sheets"])
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
-def get_receita() -> pd.DataFrame:
+def get_receitas() -> pd.DataFrame:
+    """Return the Receitas tab. Empty DF with the right columns if missing.
+
+    Columns: receita_id | nome | padrao | notas
+    `padrao` is normalized to a Python bool (TRUE/true/1/sim -> True).
+    """
+    cols = ["receita_id", "nome", "padrao", "notas"]
+    if not _has_sheet("Receitas"):
+        return pd.DataFrame(columns=cols)
     service = get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=_spreadsheet_id(), range="Receita!A2:D",
+        spreadsheetId=_spreadsheet_id(), range="Receitas!A2:D",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
     rows = result.get("values", [])
-    cols = ["produto_id", "nome", "qtde", "unidade"]
     if not rows:
         return pd.DataFrame(columns=cols)
     rows = [r + [""] * (len(cols) - len(r)) for r in rows]
     df = pd.DataFrame(rows, columns=cols)
-    df["qtde"] = pd.to_numeric(df["qtde"], errors="coerce")
+
+    def _to_bool(v):
+        if isinstance(v, bool):
+            return v
+        s = str(v).strip().lower()
+        return s in ("true", "verdadeiro", "1", "sim", "x", "yes")
+
+    df["padrao"] = df["padrao"].apply(_to_bool)
+    # Drop rows with no receita_id (defensive against blank trailing rows)
+    df = df[df["receita_id"].astype(str).str.strip() != ""]
+    return df.reset_index(drop=True)
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_receita_ingredientes(receita_id: Optional[str] = None) -> pd.DataFrame:
+    """
+    Return ingredient rows for one or all receitas.
+
+    New-schema columns: receita_id | produto_id | nome | qtde | unidade | componente
+
+    If the Receita_Ingredientes tab does not yet exist, transparently fall
+    back to reading the legacy `Receita` tab and synthesize
+    `receita_id="REC-001"` with `componente=""`. This shim keeps existing
+    pages working before the migration runs.
+    """
+    cols = ["receita_id", "produto_id", "nome", "qtde", "unidade", "componente"]
+
+    if _has_sheet("Receita_Ingredientes"):
+        service = get_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=_spreadsheet_id(), range="Receita_Ingredientes!A2:F",
+            valueRenderOption="UNFORMATTED_VALUE",
+        ).execute()
+        rows = result.get("values", [])
+        if not rows:
+            df = pd.DataFrame(columns=cols)
+        else:
+            rows = [r + [""] * (len(cols) - len(r)) for r in rows]
+            df = pd.DataFrame(rows, columns=cols)
+            df["qtde"] = pd.to_numeric(df["qtde"], errors="coerce")
+            df = df[df["produto_id"].astype(str).str.strip() != ""].reset_index(drop=True)
+    else:
+        # Transition shim: read the old Receita tab and synthesize REC-001.
+        # Safe to delete after `scripts/migrate_receitas.py --apply` has run.
+        service = get_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=_spreadsheet_id(), range="Receita!A2:D",
+            valueRenderOption="UNFORMATTED_VALUE",
+        ).execute()
+        rows = result.get("values", [])
+        if not rows:
+            df = pd.DataFrame(columns=cols)
+        else:
+            old_cols = ["produto_id", "nome", "qtde", "unidade"]
+            rows = [r + [""] * (len(old_cols) - len(r)) for r in rows]
+            df = pd.DataFrame(rows, columns=old_cols)
+            df["qtde"] = pd.to_numeric(df["qtde"], errors="coerce")
+            df = df[df["produto_id"].astype(str).str.strip() != ""].reset_index(drop=True)
+            df["receita_id"] = "REC-001"
+            df["componente"] = ""
+            df = df[cols]
+
+    if receita_id is not None:
+        df = df[df["receita_id"] == receita_id].reset_index(drop=True)
     return df
+
+
+def get_receita() -> pd.DataFrame:
+    """
+    Back-compat wrapper returning the legacy Receita shape.
+
+    Columns: produto_id | nome | qtde | unidade
+
+    Equivalent to ingredients of the padrao receita (or all of them if no
+    padrao is marked). Kept so older callers — and the pre-migration shim
+    inside `calc_custo_alimento_unid` — don't break.
+    """
+    cols = ["produto_id", "nome", "qtde", "unidade"]
+    receitas = get_receitas()
+    if not receitas.empty:
+        padrao = receitas[receitas["padrao"]]
+        receita_id = padrao.iloc[0]["receita_id"] if not padrao.empty else receitas.iloc[0]["receita_id"]
+        ing = get_receita_ingredientes(receita_id)
+    else:
+        ing = get_receita_ingredientes()
+    if ing.empty:
+        return pd.DataFrame(columns=cols)
+    return ing[cols].copy()
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
@@ -253,13 +370,50 @@ def latest_unit_price(produto_id: str, compras: Optional[pd.DataFrame] = None) -
     return float(last["preco_unitario"] or 0)
 
 
+def resolve_receita_id_for_tamanho(tamanho_row) -> Optional[str]:
+    """
+    Pick the receita_id a tamanho should use.
+
+    Priority:
+      1. The tamanho's own `receita_id` column, if present and non-empty.
+      2. The receita marked `padrao=TRUE` in Receitas.
+      3. The first receita in Receitas (defensive fallback).
+      4. "REC-001" — pre-migration shim (matches the synthesized id used
+         by `get_receita_ingredientes` when Receita_Ingredientes is missing).
+
+    Accepts either a pandas Series (single row) or a dict-like.
+    Returns the receita_id string, or None if there are no receitas at all.
+    """
+    explicit = None
+    try:
+        explicit = tamanho_row.get("receita_id") if hasattr(tamanho_row, "get") else tamanho_row["receita_id"]
+    except (KeyError, IndexError, TypeError):
+        explicit = None
+    if explicit is not None and str(explicit).strip() not in ("", "nan", "None"):
+        return str(explicit).strip()
+
+    receitas = get_receitas()
+    if not receitas.empty:
+        padrao = receitas[receitas["padrao"]]
+        if not padrao.empty:
+            return str(padrao.iloc[0]["receita_id"])
+        return str(receitas.iloc[0]["receita_id"])
+
+    # Pre-migration shim: no Receitas tab yet. The ingredientes loader
+    # synthesizes REC-001 from the legacy Receita tab, so match that id.
+    return "REC-001"
+
+
 def calc_custo_alimento_unid(tamanho_id: str) -> tuple[float, pd.DataFrame]:
     """
     Cost of ingredients per unit of pudim.
     Returns (custo_por_unidade, dataframe_with_breakdown).
+
+    The receita used is picked via `resolve_receita_id_for_tamanho` — the
+    tamanho's explicit receita_id when set, else the receita marked padrao,
+    else the synthesized REC-001 (pre-migration).
     """
     tamanhos = get_tamanhos()
-    receita = get_receita()
     compras = get_compras()
     produtos = get_produtos()
 
@@ -268,10 +422,17 @@ def calc_custo_alimento_unid(tamanho_id: str) -> tuple[float, pd.DataFrame]:
         return 0.0, pd.DataFrame()
     rendimento = float(t.iloc[0]["rendimento"] or 1)
 
+    receita_id = resolve_receita_id_for_tamanho(t.iloc[0])
+    receita = get_receita_ingredientes(receita_id) if receita_id else get_receita_ingredientes()
+
     breakdown = receita.copy()
+    if breakdown.empty:
+        return 0.0, breakdown
     breakdown["preco_unit_atual"] = breakdown["produto_id"].apply(lambda p: latest_unit_price(p, compras))
     breakdown["custo_na_receita"] = breakdown["qtde"] * breakdown["preco_unit_atual"]
-    # Join product name for display
+    # Join product name for display. `nome` may already exist in the
+    # ingredientes table; we suffix the joined column to avoid clobbering and
+    # then prefer the produto's canonical name when available.
     breakdown = breakdown.merge(
         produtos[["id", "nome"]].rename(columns={"id": "produto_id", "nome": "produto_nome"}),
         on="produto_id", how="left"
@@ -318,6 +479,7 @@ def get_tamanho_costs() -> pd.DataFrame:
             "volume_ml": row.get("volume_ml"),
             "rendimento": row.get("rendimento"),
             "canal": row.get("canal"),
+            "receita_id": row.get("receita_id") or "",
             "custo_alimento": custo_ali,
             "custo_embalagem": custo_emb,
             "custo_total": custo_total,

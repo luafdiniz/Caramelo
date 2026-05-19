@@ -865,6 +865,32 @@ def kpi(label: str, value: str, help: str = None) -> None:
     st.metric(label, value, help=help)
 
 
+# Units that don't divide: 1 forma, 2 ovos, 3 dúzias. No fractional clicks here.
+# Shared with Tamanhos/Receitas pages — when a produto's unit is one of these,
+# the number_input should be integer-only.
+INTEGER_UNITS = {"UN", "DZ", "PENTE", "PAR", "JOGO"}
+
+
+def qty_input_params(produto_id: str, produtos_df):
+    """
+    Return (min_value, step, format, is_int) tuple for a st.number_input based
+    on the produto's unit. Integer-only for countable units (UN, DZ, etc.),
+    fractional otherwise (kg, l, m, ml, g, etc.).
+
+    Falls back to fractional defaults when produtos_df is empty or the
+    produto is not found — so the caller never breaks.
+    """
+    if produtos_df is None or produtos_df.empty:
+        return 0.0, 0.05, "%.2f", False
+    prod = produtos_df[produtos_df["id"] == produto_id]
+    if prod.empty:
+        return 0.0, 0.05, "%.2f", False
+    unidade = (prod.iloc[0].get("unidade") or "").strip().upper()
+    if unidade in INTEGER_UNITS:
+        return 0, 1, "%d", True
+    return 0.0, 0.05, "%.2f", False
+
+
 def _esc_html(s) -> str:
     """Escape user-controlled strings before injecting into HTML body."""
     if s is None:
