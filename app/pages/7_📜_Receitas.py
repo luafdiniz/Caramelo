@@ -225,42 +225,40 @@ with tab_list:
             is_padrao = bool(receita["padrao"])
 
             with st.container(border=True):
-                # ---- Title row with the "⚙️ Configurar" popover ----
-                title_col, cfg_col = st.columns([5, 1])
-                with title_col:
-                    meta_text = "padrão" if is_padrao else ""
-                    card_title(
-                        receita["nome"] or "(sem nome)",
-                        badge=receita_id,
-                        meta=meta_text,
-                        meta_below=True,
-                    )
-                with cfg_col:
-                    # Spacer to vertically align the popover with the title.
+                # ---- Title row with inline name + padrão toggle (no popover) ----
+                nome_key = f"cfg_nome_{receita_id}"
+                padrao_key = f"cfg_padrao_{receita_id}"
+                if nome_key not in st.session_state:
+                    st.session_state[nome_key] = receita["nome"] or ""
+                if padrao_key not in st.session_state:
+                    st.session_state[padrao_key] = is_padrao
+
+                badge_col, name_col, padrao_col = st.columns([1, 4, 2])
+                with badge_col:
                     st.markdown(
-                        '<div style="height: 0.4rem;"></div>',
+                        f'<div style="padding-top: 0.5rem;"><code>{receita_id}</code></div>',
                         unsafe_allow_html=True,
                     )
-                    with st.popover("⚙️ Configurar", use_container_width=True):
-                        # Edits to nome + padrao are staged in session_state
-                        # and applied together by the save button below.
-                        # Seed defaults the first time only — afterwards
-                        # Streamlit owns the value via the widget key.
-                        nome_key = f"cfg_nome_{receita_id}"
-                        padrao_key = f"cfg_padrao_{receita_id}"
-                        if nome_key not in st.session_state:
-                            st.session_state[nome_key] = receita["nome"] or ""
-                        if padrao_key not in st.session_state:
-                            st.session_state[padrao_key] = is_padrao
-                        st.text_input("Nome", key=nome_key)
-                        st.checkbox(
-                            "Marcar como padrão",
-                            key=padrao_key,
-                            help=(
-                                "Tamanhos sem receita explícita usam a padrão. "
-                                "Marcar essa desmarca as outras."
-                            ),
-                        )
+                with name_col:
+                    st.text_input(
+                        "Nome",
+                        key=nome_key,
+                        label_visibility="collapsed",
+                        placeholder="Nome da receita",
+                    )
+                with padrao_col:
+                    st.markdown(
+                        '<div style="height: 0.45rem;"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.checkbox(
+                        "Receita padrão",
+                        key=padrao_key,
+                        help=(
+                            "Tamanhos sem receita explícita usam a padrão. "
+                            "Marcar essa desmarca as outras."
+                        ),
+                    )
 
                 # ---- Pre-compute ingredients (with cost columns) ----
                 ing = all_ing[all_ing["receita_id"] == receita_id].copy()

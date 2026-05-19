@@ -200,19 +200,25 @@ with tab_list:
                         ]
 
                     with st.form(f"edit_{row['id']}"):
-                        ec1, ec2 = st.columns(2)
-                        with ec1:
+                        # Row 1 — small numeric/select fields on a single line:
+                        # Preço | Rendimento | Receita. The receita selector sits
+                        # next to the others (instead of buried below Canal) so
+                        # it visually relates to the ingredient table above.
+                        c_preco, c_rend, c_rec = st.columns(3)
+                        with c_preco:
                             new_preco = st.number_input(
                                 "Preço de venda (R$)",
                                 min_value=0.0,
                                 value=float(row["preco_venda"]) if pd.notna(row.get("preco_venda")) else 0.0,
                                 step=1.0,
                             )
+                        with c_rend:
                             new_rendimento = st.number_input(
-                                "Rendimento (unidades por receita)",
+                                "Rendimento (un/receita)",
                                 min_value=1,
                                 value=int(row["rendimento"]) if pd.notna(row.get("rendimento")) else 1,
                             )
+                        with c_rec:
                             # Receita selectbox. The "(padrão)" option saves an empty
                             # string in column I → the calc layer falls back to the
                             # receita marked padrao at compute time. That way changing
@@ -222,7 +228,6 @@ with tab_list:
                                 receita_ids = list(receitas_df["receita_id"].astype(str))
                                 receita_options = [""] + receita_ids
                                 row_rid = (row.get("receita_id") or "").strip()
-                                # If the saved id no longer exists (e.g. deleted), fall back to padrao.
                                 if row_rid and row_rid not in receita_ids:
                                     row_rid = ""
                                 try:
@@ -244,21 +249,19 @@ with tab_list:
                                     help="Deixe '(padrão)' pra usar a receita marcada como padrão em 📜 Receitas.",
                                 )
                             else:
-                                # No Receitas tab yet — keep whatever was there (likely empty).
                                 new_receita_id = (row.get("receita_id") or "").strip()
-                        with ec2:
-                            # Multiselect with a "✨ Marcar todos" sentinel option in
-                            # the dropdown. If submitted with the sentinel selected,
-                            # we expand it to all canals at save time below.
-                            new_canal_list = st.multiselect(
-                                "Canal",
-                                [_CANAL_SELECT_ALL] + CANAIS_DISPONIVEIS,
-                                key=canal_key,
-                                format_func=_fmt_canal_option,
-                            )
-                            if _CANAL_SELECT_ALL in new_canal_list:
-                                new_canal_list = list(CANAIS_DISPONIVEIS)
-                            new_canal = ",".join(new_canal_list)
+                                st.caption("Receita: —")
+
+                        # Row 2 — Canal multiselect (full width because tags wrap)
+                        new_canal_list = st.multiselect(
+                            "Canal",
+                            [_CANAL_SELECT_ALL] + CANAIS_DISPONIVEIS,
+                            key=canal_key,
+                            format_func=_fmt_canal_option,
+                        )
+                        if _CANAL_SELECT_ALL in new_canal_list:
+                            new_canal_list = list(CANAIS_DISPONIVEIS)
+                        new_canal = ",".join(new_canal_list)
 
                         # Edit packaging: single integrated section — add at the
                         # top, then list & edit existing ones below.
@@ -316,23 +319,30 @@ with tab_list:
                         for _, pkg in current_pkgs.iterrows():
                             raw_val = pkg.get("qtde_por_unidade")
                             qval = float(raw_val) if pd.notna(raw_val) else 1.0
+                            pid = pkg["produto_id"]
+                            preco_unit = data.latest_unit_price(pid)
                             editor_rows.append({
-                                "ID": pkg["produto_id"],
+                                "ID": pid,
                                 "Nome": pkg["produto_nome"],
                                 "Qtde": qval,
+                                "Preço unit.": float(preco_unit) if preco_unit else 0.0,
+                                "Custo": float(qval * (preco_unit or 0.0)),
                                 "Remover": False,
                             })
                         for npkg in added_pkgs:
+                            preco_unit = data.latest_unit_price(npkg)
                             editor_rows.append({
                                 "ID": npkg,
                                 "Nome": name_by_id.get(npkg, ""),
                                 "Qtde": 1.0,
+                                "Preço unit.": float(preco_unit) if preco_unit else 0.0,
+                                "Custo": float(preco_unit or 0.0),
                                 "Remover": False,
                             })
 
                         emb_df = pd.DataFrame(
                             editor_rows,
-                            columns=["ID", "Nome", "Qtde", "Remover"],
+                            columns=["ID", "Nome", "Qtde", "Preço unit.", "Custo", "Remover"],
                         )
 
                         edited_emb_df = st.data_editor(
@@ -341,7 +351,7 @@ with tab_list:
                             hide_index=True,
                             use_container_width=True,
                             num_rows="fixed",
-                            disabled=["ID", "Nome"],
+                            disabled=["ID", "Nome", "Preço unit.", "Custo"],
                             column_config={
                                 "ID": st.column_config.TextColumn("ID", width="small"),
                                 "Nome": st.column_config.TextColumn("Nome", width="large"),
@@ -350,6 +360,16 @@ with tab_list:
                                     min_value=0,
                                     step=0.05,
                                     format="%.2f",
+                                ),
+                                "Preço unit.": st.column_config.NumberColumn(
+                                    "Preço unit.",
+                                    format="R$ %.2f",
+                                    help="Preço unitário mais recente do insumo. Mude pela página de Insumos.",
+                                ),
+                                "Custo": st.column_config.NumberColumn(
+                                    "Custo",
+                                    format="R$ %.2f",
+                                    help="Qtde × Preço unitário. Recalcula ao Salvar.",
                                 ),
                                 "Remover": st.column_config.CheckboxColumn(
                                     "Remover",
