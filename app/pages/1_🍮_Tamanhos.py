@@ -287,8 +287,6 @@ with tab_list:
 
                         current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
 
-                        edited_qtys = {}
-
                         # --- Add new packaging (TOP) ---
                         # Sort FOR first, then EMB, alphabetic by name within each.
                         _cat_order = {"FOR": 0, "EMB": 1}
@@ -305,45 +303,74 @@ with tab_list:
                             format_func=lambda x: new_pkg_opts[new_pkg_opts["id"] == x]["label"].iloc[0],
                             key=f"add_pkg_{row['id']}",
                         )
-                        for npkg in added_pkgs:
-                            min_v, step_v, fmt_v, is_int = _qty_input_params(npkg, produtos_df)
-                            edited_qtys[npkg] = st.number_input(
-                                f"Qtde de {npkg}",
-                                min_value=min_v,
-                                value=(1 if is_int else 1.0),
-                                step=step_v, format=fmt_v,
-                                key=f"new_qty_{row['id']}_{npkg}",
-                            )
 
-                        # Tiny visual gap between the "add" controls and the
-                        # existing-package rows so they don't blur together.
-                        if not current_pkgs.empty:
-                            st.markdown('<div style="height: 0.4rem;"></div>', unsafe_allow_html=True)
+                        # --- Build the editable table: existing packages + newly picked ones. ---
+                        # Lookup produto name for the newly-added IDs (the multiselect
+                        # only returns IDs).
+                        if not all_pkg_opts.empty:
+                            name_by_id = dict(zip(all_pkg_opts["id"], all_pkg_opts["nome"]))
+                        else:
+                            name_by_id = {}
 
-                        # --- Existing packaging rows ---
+                        editor_rows = []
                         for _, pkg in current_pkgs.iterrows():
-                            min_v, step_v, fmt_v, is_int = _qty_input_params(pkg["produto_id"], produtos_df)
                             raw_val = pkg.get("qtde_por_unidade")
-                            if pd.notna(raw_val):
-                                val_v = int(round(float(raw_val))) if is_int else float(raw_val)
-                            else:
-                                val_v = 1 if is_int else 1.0
-                            qcol, rcol = st.columns([5, 1])
-                            with qcol:
-                                qty = st.number_input(
-                                    f"{pkg['produto_id']} — {pkg['produto_nome']}",
-                                    min_value=min_v,
-                                    value=val_v,
-                                    step=step_v, format=fmt_v,
-                                    key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
-                                )
-                            with rcol:
-                                st.markdown('<div style="height: 1.8rem;"></div>', unsafe_allow_html=True)
-                                remove = st.checkbox(
-                                    "🗑️", key=f"rm_{row['id']}_{pkg['produto_id']}",
-                                    help="Remover essa embalagem",
-                                )
-                            edited_qtys[pkg["produto_id"]] = 0 if remove else qty
+                            qval = float(raw_val) if pd.notna(raw_val) else 1.0
+                            editor_rows.append({
+                                "ID": pkg["produto_id"],
+                                "Nome": pkg["produto_nome"],
+                                "Qtde": qval,
+                                "Remover": False,
+                            })
+                        for npkg in added_pkgs:
+                            editor_rows.append({
+                                "ID": npkg,
+                                "Nome": name_by_id.get(npkg, ""),
+                                "Qtde": 1.0,
+                                "Remover": False,
+                            })
+
+                        emb_df = pd.DataFrame(
+                            editor_rows,
+                            columns=["ID", "Nome", "Qtde", "Remover"],
+                        )
+
+                        edited_emb_df = st.data_editor(
+                            emb_df,
+                            key=f"emb_editor_{row['id']}",
+                            hide_index=True,
+                            use_container_width=True,
+                            num_rows="fixed",
+                            disabled=["ID", "Nome"],
+                            column_config={
+                                "ID": st.column_config.TextColumn("ID", width="small"),
+                                "Nome": st.column_config.TextColumn("Nome", width="large"),
+                                "Qtde": st.column_config.NumberColumn(
+                                    "Qtde",
+                                    min_value=0,
+                                    step=0.05,
+                                    format="%.2f",
+                                ),
+                                "Remover": st.column_config.CheckboxColumn(
+                                    "Remover",
+                                    help="Marca pra remover essa embalagem ao salvar.",
+                                    width="small",
+                                ),
+                            },
+                        )
+
+                        # Build edited_qtys from the data_editor output.
+                        # Integer-unit produtos (UN, DZ, etc.) get rounded back to int on save.
+                        edited_qtys = {}
+                        if not edited_emb_df.empty:
+                            for _, r in edited_emb_df.iterrows():
+                                pid = r["ID"]
+                                if r["Remover"]:
+                                    edited_qtys[pid] = 0
+                                    continue
+                                _, _, _, is_int = _qty_input_params(pid, produtos_df)
+                                qv = float(r["Qtde"]) if pd.notna(r["Qtde"]) else 0.0
+                                edited_qtys[pid] = int(round(qv)) if is_int else qv
 
                         if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
                             try:
