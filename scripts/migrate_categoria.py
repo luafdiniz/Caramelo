@@ -38,7 +38,7 @@ sys.path.insert(0, str(REPO_ROOT / "bot"))
 from bot.lib import sheets as _sheets  # noqa: E402
 
 
-VALID_CATEGORIAS = {"ALI", "FOR", "EMB", "EQP", "OPR"}
+VALID_CATEGORIAS = {"ALI", "FOR", "EMB", "GRA", "EQP", "OPR"}
 
 
 def _next_id_for_categoria(svc, ssid: str, categoria: str) -> str:

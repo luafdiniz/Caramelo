@@ -67,20 +67,22 @@ st.title("📦 Insumos")
 st.caption("Catálogo de matérias-primas, preço atual e histórico por fornecedor.")
 
 
-CAT_EMOJI = {"ALI": "🍯", "FOR": "🥣", "EMB": "📦", "EQP": "🔧", "OPR": "🧻"}
+CAT_EMOJI = {"ALI": "🍯", "FOR": "🥣", "EMB": "📦", "GRA": "🖨️", "EQP": "🔧", "OPR": "🧻"}
 CAT_LABEL = {
     "ALI": "Alimentos (ingredientes da receita)",
     "FOR": "Formas",
-    "EMB": "Embalagens",
+    "EMB": "Embalagens (físicas)",
+    "GRA": "Gráfica (adesivos, etiquetas, impressos)",
     "EQP": "Equipamentos duráveis",
     "OPR": "Operacionais (consumíveis)",
 }
 # Order of inner category tabs (matches the home page / Tamanhos page).
-CAT_TAB_ORDER = ["ALI", "FOR", "EMB", "EQP", "OPR"]
+CAT_TAB_ORDER = ["ALI", "FOR", "EMB", "GRA", "EQP", "OPR"]
 CAT_TAB_TITLE = {
     "ALI": "🍯 Alimentos",
     "FOR": "🥣 Formas",
     "EMB": "📦 Embalagens",
+    "GRA": "🖨️ Gráfica",
     "EQP": "🔧 Equipamentos",
     "OPR": "🧻 Operacionais",
 }
@@ -146,18 +148,28 @@ fornecedores_map: dict[str, str] = (
 
 
 def _stats_for(produto_id: str) -> dict:
-    """Aggregate Compras for one produto: latest price, min/max/mean, count,
-    last date and last fornecedor. None values for produtos without compras."""
+    """Aggregate Compras stats + the resolved current price.
+
+    `preco_atual` is the price the rest of the app uses for cost calc — the
+    manual override if still active, else the weighted average of the last 3
+    compras. `origem` carries the source label ("manual", "wac", "none").
+    The min/max/mean/count stats remain purely about the Compras history.
+    """
     sub = compras[compras["produto_id"] == produto_id].dropna(subset=["data"])
+    resolved = data.current_unit_price(produto_id, compras=compras, produtos=produtos)
+    origem = data.price_origin(produto_id, compras=compras, produtos=produtos)
     if sub.empty:
         return {
-            "preco_atual": None, "menor": None, "maior": None,
+            "preco_atual": resolved if resolved > 0 else None,
+            "origem": origem,
+            "menor": None, "maior": None,
             "media": None, "n_compras": 0, "ultima_data": None,
             "fornecedor_atual": None,
         }
     latest = sub.sort_values("data", ascending=False).iloc[0]
     return {
-        "preco_atual": float(latest["preco_unitario"] or 0),
+        "preco_atual": resolved if resolved > 0 else None,
+        "origem": origem,
         "menor": float(sub["preco_unitario"].min()),
         "maior": float(sub["preco_unitario"].max()),
         "media": float(sub["preco_unitario"].mean()),
@@ -170,21 +182,22 @@ def _stats_for(produto_id: str) -> dict:
 if not produtos.empty:
     prods_enriched = produtos.copy()
     _stats_records = [_stats_for(p) for p in prods_enriched["id"]]
-    for _k in ["preco_atual", "menor", "maior", "media", "n_compras", "ultima_data", "fornecedor_atual"]:
+    for _k in ["preco_atual", "origem", "menor", "maior", "media", "n_compras", "ultima_data", "fornecedor_atual"]:
         prods_enriched[_k] = [s[_k] for s in _stats_records]
 else:
     prods_enriched = produtos
 
 
-tab_tabela, tab_ali, tab_for, tab_emb, tab_eqp, tab_opr = st.tabs([
+tab_tabela, tab_ali, tab_for, tab_emb, tab_gra, tab_eqp, tab_opr = st.tabs([
     "📋 Tabela",
     CAT_TAB_TITLE["ALI"],
     CAT_TAB_TITLE["FOR"],
     CAT_TAB_TITLE["EMB"],
+    CAT_TAB_TITLE["GRA"],
     CAT_TAB_TITLE["EQP"],
     CAT_TAB_TITLE["OPR"],
 ])
-_cat_tabs = {"ALI": tab_ali, "FOR": tab_for, "EMB": tab_emb, "EQP": tab_eqp, "OPR": tab_opr}
+_cat_tabs = {"ALI": tab_ali, "FOR": tab_for, "EMB": tab_emb, "GRA": tab_gra, "EQP": tab_eqp, "OPR": tab_opr}
 
 
 # ============================================================================
@@ -292,6 +305,8 @@ with tab_tabela:
         else:
             st.caption(f"{len(base_filtered)} insumo(s)")
 
+            _ORIGEM_LABEL = {"manual": "✋ Manual", "wac": "📊 Média", "none": "—"}
+
             editor_df = pd.DataFrame({
                 "ID": base_filtered["id"].values,
                 "🍯": [CAT_EMOJI.get(c, "•") for c in base_filtered["categoria"].values],
@@ -303,6 +318,7 @@ with tab_tabela:
                     (float(p) if p is not None and pd.notna(p) else None)
                     for p in base_filtered["preco_atual"].values
                 ],
+                "Origem": [_ORIGEM_LABEL.get(o, "—") for o in base_filtered["origem"].values],
                 "Compras": [int(n) for n in base_filtered["n_compras"].values],
                 "Última": [
                     (pd.Timestamp(d).date() if d is not None and pd.notna(d) else None)
@@ -355,8 +371,17 @@ with tab_tabela:
                     "Preço atual": st.column_config.NumberColumn(
                         "Preço atual", format="R$ %.2f", width="small", min_value=0.0,
                         help=(
-                            "Edite para registrar uma Compra de ajuste manual "
-                            "(qtde 1, fornecedor = o da última compra deste insumo)."
+                            "Editar grava um override manual direto no insumo — "
+                            "não cria Compra. O override expira sozinho quando "
+                            "uma Compra mais nova entrar."
+                        ),
+                    ),
+                    "Origem": st.column_config.TextColumn(
+                        "Origem", disabled=True, width="small",
+                        help=(
+                            "De onde vem o Preço atual: 📊 Média = média ponderada "
+                            "das últimas 3 compras; ✋ Manual = override que você "
+                            "definiu; — = sem dados."
                         ),
                     ),
                     "Compras": st.column_config.NumberColumn(
@@ -417,8 +442,9 @@ with tab_tabela:
                         "notas": new_notas,
                     })
 
-                # Track price updates — only when the user typed a different,
-                # positive value into "Preço atual".
+                # Track price updates — typing a different positive value sets
+                # a manual override on the produto (Produtos.G/H). Clearing the
+                # cell removes the override. Either way: no Compra is created.
                 new_preco_raw = row["Preço atual"]
                 orig_preco_raw = orig["Preço atual"]
                 new_preco = (
@@ -431,18 +457,24 @@ with tab_tabela:
                     if orig_preco_raw is not None and not pd.isna(orig_preco_raw)
                     else None
                 )
-                price_changed = (
-                    new_preco is not None
-                    and new_preco > 0
-                    and (orig_preco is None or abs(new_preco - orig_preco) > 0.005)
-                )
-                if price_changed:
-                    forn_id = base_filtered.iloc[i].get("fornecedor_atual") or ""
+                orig_origem = str(base_filtered.iloc[i].get("origem") or "")
+                if new_preco is not None and new_preco > 0:
+                    price_changed = (
+                        orig_preco is None or abs(new_preco - orig_preco) > 0.005
+                    )
+                    if price_changed:
+                        price_updates.append({
+                            "produto_id": produto_id,
+                            "action": "set",
+                            "preco": float(new_preco),
+                        })
+                elif new_preco is None and orig_preco is not None and orig_origem == "manual":
+                    # Cleared the cell on a row that had an active override —
+                    # interpret as "remove override". Clearing on a WAC row
+                    # is a no-op (nothing to remove).
                     price_updates.append({
                         "produto_id": produto_id,
-                        "fornecedor_id": forn_id,
-                        "marca": new_marca,
-                        "preco": float(new_preco),
+                        "action": "clear",
                     })
 
                 # Track deletions (bulk path).
@@ -530,21 +562,22 @@ with tab_tabela:
                             body={"values": [[nc["marca"]]]},
                         ).execute()
 
-                    # 2) Price updates — one Compra per produto whose
-                    #    "Preço atual" was edited to a new value.
+                    # 2) Price updates — write directly to Produtos.G/H.
+                    #    No Compra is created. The override expires when a
+                    #    newer Compra for this produto is registered.
+                    today_iso = date.today().isoformat()
                     for pu in price_updates:
-                        data._sheets.append_compra(
-                            spreadsheet_id,
-                            data=date.today().strftime("%Y-%m-%d"),
-                            produto_id=pu["produto_id"],
-                            fornecedor_id=pu["fornecedor_id"],
-                            marca=pu["marca"],
-                            qtde_embalagens=1,
-                            unidades_por_embalagem=1,
-                            preco_total=pu["preco"],
-                            notas="Ajuste manual de preço",
-                            service=service,
-                        )
+                        row_num = data.find_row_by_id("Produtos", pu["produto_id"])
+                        if pu["action"] == "set":
+                            values = [[pu["preco"], today_iso]]
+                        else:  # "clear"
+                            values = [["", ""]]
+                        service.spreadsheets().values().update(
+                            spreadsheetId=spreadsheet_id,
+                            range=f"Produtos!G{row_num}:H{row_num}",
+                            valueInputOption="USER_ENTERED",
+                            body={"values": values},
+                        ).execute()
 
                     # 3) Deletions — done last so row numbers for earlier
                     #    writes stay correct. We re-resolve the row each
@@ -597,6 +630,8 @@ def _render_produto_card(
     notas = p["notas"] or ""
     emoji = CAT_EMOJI.get(categoria, "•")
     preco_atual = p["preco_atual"]
+    origem = str(p.get("origem") or "")
+    preco_manual_data = p.get("preco_manual_data") if "preco_manual_data" in p.index else None
     n_compras = int(p["n_compras"])
     ultima_data = p["ultima_data"]
     ultima_str = (
@@ -628,13 +663,51 @@ def _render_produto_card(
                 meta_below=True,
             )
         with col_preco:
+            if origem == "manual":
+                manual_str = (
+                    pd.Timestamp(preco_manual_data).strftime("%d/%m/%Y")
+                    if preco_manual_data is not None and pd.notna(preco_manual_data)
+                    else ""
+                )
+                kpi_help = (
+                    f"✋ Override manual"
+                    + (f" desde {manual_str}" if manual_str else "")
+                    + " — expira na próxima Compra deste insumo."
+                )
+            elif origem == "wac":
+                kpi_help = f"📊 Média ponderada das últimas 3 compras. Última: {ultima_str}"
+            else:
+                kpi_help = "Sem compras nem override registrados."
             compact_kpi(
                 "Preço atual",
                 brl(preco_atual) if preco_atual is not None else "—",
-                help=f"Última compra: {ultima_str}",
+                help=kpi_help,
             )
         with col_n:
             compact_kpi("Compras", str(n_compras))
+
+        # Inline action: clear the override when one is active. Sits right
+        # under the KPI strip so the affordance is visible without opening
+        # the expander.
+        if origem == "manual":
+            if st.button(
+                "✋ Limpar override manual",
+                key=f"clr_override_{produto_id}",
+                help="Volta a calcular Preço atual pela média ponderada das últimas compras.",
+            ):
+                try:
+                    row_num = data.find_row_by_id("Produtos", produto_id)
+                    data.get_service().spreadsheets().values().update(
+                        spreadsheetId=data._spreadsheet_id(),
+                        range=f"Produtos!G{row_num}:H{row_num}",
+                        valueInputOption="USER_ENTERED",
+                        body={"values": [["", ""]]},
+                    ).execute()
+                    data.invalidate_cache()
+                    st.success(f"✅ Override de `{produto_id}` removido.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao limpar override: {e}")
 
         # --- Mais detalhes expander ---
         with st.expander("🔎 Mais detalhes"):

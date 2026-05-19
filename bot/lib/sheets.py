@@ -32,10 +32,16 @@ def get_service(credentials_json: Optional[str] = None):
 
 
 def get_produtos(spreadsheet_id: str, service=None) -> list[dict]:
-    """Return list of products with optional relacionados + marca_padrao."""
+    """Return list of products with optional relacionados + marca_padrao.
+
+    Columns G (Preco_manual) and H (Preco_manual_data) are the manual price
+    override added by `scripts/migrate_produtos_preco_manual.py`. They are
+    optional — if the migration hasn't run, the dicts come back with empty
+    string defaults and the cost layer falls back to the WAC of past compras.
+    """
     service = service or get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Produtos!A2:F"
+        spreadsheetId=spreadsheet_id, range="Produtos!A2:H"
     ).execute()
     rows = result.get("values", [])
     out = []
@@ -51,6 +57,8 @@ def get_produtos(spreadsheet_id: str, service=None) -> list[dict]:
             "notas": r[3] if len(r) > 3 else "",
             "relacionados": relacionados,
             "marca_padrao": (r[5] if len(r) > 5 else "") or "",
+            "preco_manual": (r[6] if len(r) > 6 else "") or "",
+            "preco_manual_data": (r[7] if len(r) > 7 else "") or "",
         })
     return out
 
@@ -133,7 +141,7 @@ def create_produto(
     service=None,
 ) -> str:
     """Add a new produto row. Returns the new ID with category prefix."""
-    if categoria not in ("ALI", "FOR", "EMB", "EQP", "OPR"):
+    if categoria not in ("ALI", "FOR", "EMB", "GRA", "EQP", "OPR"):
         raise ValueError(f"Invalid categoria: {categoria}")
 
     service = service or get_service()
@@ -163,10 +171,17 @@ def append_compra(
     unidades_por_embalagem: float,
     preco_total: float,
     notas: str = "",
+    frete: float = 0.0,
+    desconto: float = 0.0,
     service=None,
 ) -> str:
     """
     Append a row to Compras. Returns the new C-NNN ID.
+
+    `preco_total` MUST already include the share of frete/desconto for this
+    item (the caller does the rateio — see orchestrator._finalize). The raw
+    `frete` and `desconto` totals are stored in columns L/M of every row of
+    the same Compra batch for audit.
 
     Total_Unidades and Preco_Unitario are written as formulas so they recalculate.
     """
@@ -191,6 +206,8 @@ def append_compra(
         preco_total,
         f"=IF(H{next_row}>0;I{next_row}/H{next_row};0)",
         notas or "",
+        frete if frete else "",
+        desconto if desconto else "",
     ]]
 
     service.spreadsheets().values().update(
@@ -201,3 +218,37 @@ def append_compra(
     ).execute()
 
     return compra_id
+
+
+def distribute_frete_desconto(
+    items: list[dict], frete: float = 0.0, desconto: float = 0.0,
+) -> list[float]:
+    """
+    Return one effective preco_total per item, with frete and desconto rateado
+    proportionally to each item's raw preco_total.
+
+    Formula: ajuste_item = (frete - desconto) × (item.preco_total / subtotal).
+    Falls back to equal split when subtotal == 0. Raises ValueError if the
+    desconto would push any item negative — the user must fix the input.
+
+    `items` is a list of dicts with at least a `preco_total` key (raw).
+    """
+    if not items:
+        return []
+    raws = [float(it.get("preco_total") or 0) for it in items]
+    subtotal = sum(raws)
+    n = len(items)
+    ajuste_total = float(frete or 0) - float(desconto or 0)
+
+    if subtotal > 0:
+        pesos = [r / subtotal for r in raws]
+    else:
+        pesos = [1.0 / n] * n
+
+    effectives = [raws[i] + ajuste_total * pesos[i] for i in range(n)]
+    if any(e < 0 for e in effectives):
+        raise ValueError(
+            f"Desconto (R$ {desconto:.2f}) maior que o total da compra "
+            f"(R$ {subtotal + (frete or 0):.2f}). Confere os valores."
+        )
+    return effectives

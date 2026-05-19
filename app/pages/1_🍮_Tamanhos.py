@@ -292,7 +292,7 @@ with tab_list:
 
                         # --- Add new packaging (TOP) ---
                         # Sort FOR first, then EMB, alphabetic by name within each.
-                        _cat_order = {"FOR": 0, "EMB": 1}
+                        _cat_order = {"FOR": 0, "EMB": 1, "GRA": 2}
                         all_pkg_opts = produtos_df[produtos_df["categoria"].isin(_cat_order.keys())].copy() if not produtos_df.empty else pd.DataFrame()
                         if not all_pkg_opts.empty:
                             all_pkg_opts["_co"] = all_pkg_opts["categoria"].map(_cat_order)
@@ -391,6 +391,18 @@ with tab_list:
                                 _, _, _, is_int = _qty_input_params(pid, produtos_df)
                                 qv = float(r["Qtde"]) if pd.notna(r["Qtde"]) else 0.0
                                 edited_qtys[pid] = int(round(qv)) if is_int else qv
+
+                        # Total geral de custo de embalagem por unidade — soma das
+                        # linhas que NÃO estão marcadas pra remover. Útil pra
+                        # conferir o número antes de salvar.
+                        if not edited_emb_df.empty:
+                            mask_keep = ~edited_emb_df["Remover"].astype(bool)
+                            total_emb_unid = float(
+                                pd.to_numeric(edited_emb_df.loc[mask_keep, "Custo"], errors="coerce").fillna(0).sum()
+                            )
+                            st.caption(
+                                f"**Total embalagem por unidade: {brl_md(total_emb_unid)}**"
+                            )
 
                         if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
                             try:
@@ -617,7 +629,7 @@ with tab_new:
 
         # Pre-filter to packaging-relevant categorias, sort FOR first then EMB,
         # alphabetic by name within each category.
-        _cat_order = {"FOR": 0, "EMB": 1}
+        _cat_order = {"FOR": 0, "EMB": 1, "GRA": 2}
         pkg_options = produtos[produtos["categoria"].isin(_cat_order.keys())].copy() if not produtos.empty else pd.DataFrame()
         if not pkg_options.empty:
             pkg_options["_co"] = pkg_options["categoria"].map(_cat_order)

@@ -499,6 +499,21 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
     elif action == "save":  # final save
         _finalize(chat_id, message_id, payload, state_id, service=service)
         return
+    elif action == "editfd":  # edit frete / desconto for this Compra
+        payload["awaiting_frete_desconto"] = True
+        frete = float(payload.get("frete") or 0)
+        desconto = float(payload.get("desconto") or 0)
+        tg.edit_message_text(
+            chat_id, message_id,
+            "🚚 <b>Frete e desconto desta compra</b>\n\n"
+            f"Atual: frete <b>R$ {frete:.2f}</b> · desconto <b>R$ {desconto:.2f}</b>\n\n"
+            "Manda no formato <code>frete / desconto</code> (ex: <code>8 / 0</code>, "
+            "<code>15,50 / 5</code>). Use <code>0</code> quando não tiver.",
+            reply_markup=None,
+        )
+        state.delete_state(_spreadsheet_id(), state_id, service=service)
+        state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+        return
     else:
         return
 
@@ -811,6 +826,8 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
     forn_name = _resolve_forn_name(forn_id)
     itens = payload.get("itens", [])
     resolved = payload.get("items_resolved", [])
+    frete = float(payload.get("frete") or 0)
+    desconto = float(payload.get("desconto") or 0)
 
     included = []
     skipped_outro = []
@@ -839,6 +856,7 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
         f"📝 <b>Pronto pra salvar?</b>",
         f"Fornecedor: <b>{_esc(forn_name)}</b>",
         f"Data: {_esc(payload.get('data') or 'hoje')}",
+        f"Frete: <b>R$ {frete:.2f}</b> · Desconto: <b>R$ {desconto:.2f}</b>",
     ]
     if included:
         lines += ["", f"<b>Vou adicionar ({len(included)}):</b>"] + included
@@ -849,6 +867,7 @@ def _ask_final(chat_id: int, state_id: str, payload: dict) -> None:
 
     buttons = [
         [{"text": f"💾 Salvar {len(included)} compra(s)", "callback_data": f"save:{state_id}"}],
+        [{"text": "🚚 Editar frete/desconto", "callback_data": f"editfd:{state_id}"}],
     ]
     if _can_undo(payload):
         buttons.append([{"text": "✏️ Editar um item", "callback_data": f"iedit:{state_id}"}])
@@ -863,36 +882,72 @@ def _finalize(chat_id: int, message_id: int, payload: dict, state_id: str, servi
     data = payload.get("data") or datetime.now().strftime("%Y-%m-%d")
     itens = payload.get("itens", [])
     resolved = payload.get("items_resolved", [])
+    frete = float(payload.get("frete") or 0)
+    desconto = float(payload.get("desconto") or 0)
 
     # Build a produto_id → marca_padrao map for fallback when Gemini didn't
     # extract a marca from the receipt.
     produtos = sheets.get_produtos(_spreadsheet_id(), service=service)
     marca_padrao_by_id = {p["id"]: (p.get("marca_padrao") or "") for p in produtos}
 
-    added = []
+    # Collect the items that will actually be appended so we can distribute
+    # frete and desconto proportionally over their raw preco_total before
+    # writing the EFFECTIVE preco_total to the sheet.
+    to_append = []
     for idx, item in enumerate(itens):
         r = resolved[idx]
         if not r or r["action"] == "skip":
             continue
         pack = int(r.get("pack_size") or item.get("unidades_por_embalagem", 1) or 1)
         marca = (item.get("marca") or "").strip() or marca_padrao_by_id.get(r["produto_id"], "")
+        to_append.append({
+            "produto_id": r["produto_id"],
+            "marca": marca,
+            "qtde_embalagens": item.get("qtde_embalagens", 1),
+            "unidades_por_embalagem": pack,
+            "preco_total": float(item.get("preco_total", 0) or 0),
+        })
+
+    try:
+        effective_totals = sheets.distribute_frete_desconto(to_append, frete=frete, desconto=desconto)
+    except ValueError as e:
+        tg.edit_message_text(
+            chat_id, message_id,
+            f"❌ Não consegui salvar essa compra: {e}\n\nEdita os valores e reenvia.",
+            reply_markup=None,
+        )
+        return
+
+    added = []
+    notas_base = f"Via bot — {payload.get('observacoes', '')}".strip(" —")
+    for it, preco_efetivo in zip(to_append, effective_totals):
         compra_id = sheets.append_compra(
             spreadsheet_id=_spreadsheet_id(),
             data=data,
-            produto_id=r["produto_id"],
+            produto_id=it["produto_id"],
             fornecedor_id=forn_id,
-            marca=marca,
-            qtde_embalagens=item.get("qtde_embalagens", 1),
-            unidades_por_embalagem=pack,
-            preco_total=item.get("preco_total", 0),
-            notas=f"Via bot — {payload.get('observacoes', '')}".strip(" —"),
+            marca=it["marca"],
+            qtde_embalagens=it["qtde_embalagens"],
+            unidades_por_embalagem=it["unidades_por_embalagem"],
+            preco_total=preco_efetivo,
+            notas=notas_base,
+            frete=frete,
+            desconto=desconto,
             service=service,
         )
         added.append(compra_id)
 
     state.delete_state(_spreadsheet_id(), state_id, service=service)
 
-    msg = f"✅ Adicionei {len(added)} compra(s):\n" + "\n".join(f"• {c}" for c in added)
+    rate_line = ""
+    if frete or desconto:
+        parts = []
+        if frete:
+            parts.append(f"frete R$ {frete:.2f} ratado")
+        if desconto:
+            parts.append(f"desconto R$ {desconto:.2f}")
+        rate_line = f" ({', '.join(parts)})"
+    msg = f"✅ Adicionei {len(added)} compra(s){rate_line}:\n" + "\n".join(f"• {c}" for c in added)
     tg.edit_message_text(chat_id, message_id, msg, reply_markup=None)
 
 
@@ -950,6 +1005,9 @@ def handle_text_hint(chat_id: int, text: str) -> bool:
     if "awaiting_text_for_item" in payload:
         return _handle_item_name_text(chat_id, state_id, payload, text, service)
 
+    if payload.get("awaiting_frete_desconto"):
+        return _handle_frete_desconto_text(chat_id, state_id, payload, text, service)
+
     # Standalone /novo and /compra flows wait for free-text input at specific steps.
     flow = payload.get("flow")
     step = payload.get("step")
@@ -959,6 +1017,37 @@ def handle_text_hint(chat_id: int, text: str) -> bool:
         return _handle_compra_text(chat_id, state_id, payload, text, service)
 
     return False
+
+
+def _handle_frete_desconto_text(chat_id, state_id, payload, text, service) -> bool:
+    """Parse 'frete / desconto' (e.g. '8/0', '15,50 / 5'), update state, re-show summary."""
+    raw = text.replace("R$", "").replace(",", ".").strip()
+    parts = [p.strip() for p in raw.split("/")]
+    if len(parts) != 2:
+        tg.send_message(
+            chat_id,
+            "❌ Formato inválido. Manda <code>frete / desconto</code> "
+            "(ex: <code>8 / 0</code>).",
+        )
+        return True
+    try:
+        frete = max(0.0, float(parts[0]))
+        desconto = max(0.0, float(parts[1]))
+    except ValueError:
+        tg.send_message(
+            chat_id,
+            "❌ Não entendi os números. Manda assim: <code>8 / 0</code>.",
+        )
+        return True
+
+    payload["frete"] = frete
+    payload["desconto"] = desconto
+    payload.pop("awaiting_frete_desconto", None)
+    state.delete_state(_spreadsheet_id(), state_id, service=service)
+    new_state_id = state.save_state(_spreadsheet_id(), payload, chat_id=chat_id, service=service)
+    tg.send_message(chat_id, f"✓ Frete R$ {frete:.2f} · Desconto R$ {desconto:.2f}.")
+    _ask_final(chat_id, new_state_id, payload)
+    return True
 
 
 def _handle_pack_size_text(chat_id, state_id, payload, text, service) -> bool:

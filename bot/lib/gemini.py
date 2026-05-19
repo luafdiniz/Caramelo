@@ -28,7 +28,7 @@ Analise a imagem da nota e retorne APENAS um JSON válido com este formato exato
     {
       "descricao": "Nome do item como aparece na nota",
       "marca": "Marca se identificável, ou null",
-      "categoria": "ALI" | "FOR" | "EMB" | "EQP" | "OPR" | "OUTRO",
+      "categoria": "ALI" | "FOR" | "EMB" | "GRA" | "EQP" | "OPR" | "OUTRO",
       "qtde_embalagens": 1,
       "unidades_por_embalagem": 1,
       "preco_unitario": 0.00,
@@ -36,7 +36,9 @@ Analise a imagem da nota e retorne APENAS um JSON válido com este formato exato
       "confianca": "alta" | "media" | "baixa"
     }
   ],
-  "observacoes": "Notas sobre a extração (desconto aplicado, itens ilegíveis, manuscrito, etc.)",
+  "frete": 0.00,
+  "desconto": 0.00,
+  "observacoes": "Notas sobre a extração (itens ilegíveis, manuscrito, etc.)",
   "confianca_geral": "alta" | "media" | "baixa"
 }
 
@@ -50,7 +52,8 @@ Regras:
 Categoria (importante! distingue entre tipos de custo):
 - ALI = alimentos/ingredientes comestíveis que entram na receita do pudim (açúcar, leite, ovo, leite condensado, farinha, etc.)
 - FOR = formas para o pudim (forma plástica, alumínio, etc.)
-- EMB = embalagens do produto final (sacola, fita, barbante, etiqueta, adesivo, celofane, colher descartável que vai pro cliente, etc.)
+- EMB = embalagens FÍSICAS do produto final (sacola, fita lisa, barbante, celofane, colher descartável, pote, tampa, lacre — sem impressão).
+- GRA = material impresso em gráfica (adesivo, etiqueta, rótulo, papel impresso, cartão, flyer, tag). É custo de comunicação visual / identidade, não embalagem física. **Importante:** adesivo e etiqueta vão em GRA, NÃO em EMB.
 - EQP = equipamentos/utensílios duráveis de cozinha (panela, grade, luva silicone, espátula, batedeira, etc.)
 - OPR = consumíveis operacionais usados na produção que NÃO vão pro produto final (papel toalha, palito de dente, papelaria/escritório, sacos de lixo, detergente neutro de cozinha, etc.)
 - OUTRO = produtos claramente pessoais ou irrelevantes pro negócio de pudim (bebidas pessoais como Red Bull/cerveja, cosméticos, comida não-ingrediente, etc.)
@@ -60,8 +63,12 @@ Regras pra classificar:
 - Se você não tem certeza se é insumo do negócio ou pessoal → OUTRO (usuário pode reverter)
 - "Detergente" pra lavar prato de cozinha → OPR; sabão de roupa → OUTRO
 
+Frete e desconto:
+- Se a nota mostrar uma linha "TAXA DE ENTREGA", "FRETE", "ENTREGA" → preencher "frete" com o valor total (positivo).
+- Se a nota mostrar uma linha "DESCONTO", "DESC.", "ABATIMENTO" → preencher "desconto" com o valor total (positivo, sem sinal de menos).
+- Se não houver, deixe 0.
+
 - Para notas manuscritas ou com itens ilegíveis, marque confianca: "baixa" e explique em observacoes
-- Se houver desconto aplicado ao total, mencione em observacoes mas mantenha preco_total dos itens conforme aparecem
 - NÃO invente dados. Se algo está ilegível, escreva "ILEGÍVEL" na descrição e marque confianca: "baixa"
 """
 
@@ -147,7 +154,7 @@ Retorne APENAS um JSON válido com o mesmo formato do parser de nota fiscal:
     {
       "descricao": "Nome do produto",
       "marca": null,
-      "categoria": "ALI" | "FOR" | "EMB" | "EQP" | "OPR" | "OUTRO",
+      "categoria": "ALI" | "FOR" | "EMB" | "GRA" | "EQP" | "OPR" | "OUTRO",
       "qtde_embalagens": 1,
       "unidades_por_embalagem": 1,
       "preco_unitario": 0.00,
@@ -155,6 +162,8 @@ Retorne APENAS um JSON válido com o mesmo formato do parser de nota fiscal:
       "confianca": "alta" | "media" | "baixa"
     }
   ],
+  "frete": 0.00,
+  "desconto": 0.00,
   "observacoes": "Notas curtas sobre a interpretação (ambiguidade, suposições)",
   "confianca_geral": "alta" | "media" | "baixa"
 }
@@ -162,7 +171,8 @@ Retorne APENAS um JSON válido com o mesmo formato do parser de nota fiscal:
 Categorias (mesma classificação do parser de nota):
 - ALI = alimentos/ingredientes (açúcar, leite, ovo, leite condensado, etc.)
 - FOR = formas de pudim (forma plástica, alumínio, pote pra pudim, etc.)
-- EMB = embalagens (sacola, fita, etiqueta, adesivo, celofane, colher descartável, etc.)
+- EMB = embalagens FÍSICAS sem impressão (sacola lisa, fita lisa, barbante, celofane, colher descartável, pote, tampa, lacre)
+- GRA = material impresso em gráfica (adesivo, etiqueta, rótulo, papel impresso, cartão, flyer, tag). **Adesivo e etiqueta sempre vão em GRA, não em EMB.**
 - EQP = equipamentos duráveis (panela, grade, luva silicone, espátula, batedeira, etc.)
 - OPR = consumíveis operacionais (papel toalha, palito, sabão neutro, etc.)
 - OUTRO = pessoal ou irrelevante (bebidas, cosméticos, etc.)
@@ -179,12 +189,19 @@ Regras de confiança:
 - Se algum desses estiver implícito ou ambíguo: "media"
 - Se faltar algo crítico (sem produto, sem preço, sem qtde): "baixa" e explique em observacoes
 
+Frete e desconto:
+- Se a mensagem citar frete/entrega/taxa → preencher "frete" com o valor (positivo).
+- Se citar desconto → preencher "desconto" com o valor (positivo).
+- Se não citar, deixe 0.
+
 Se a mensagem NÃO descrever uma compra (saudação, pergunta, comando aleatório), responda:
 {
   "fornecedor": "DESCONHECIDO",
   "data": null,
   "total": 0,
   "itens": [],
+  "frete": 0,
+  "desconto": 0,
   "observacoes": "Mensagem não parece descrever uma compra.",
   "confianca_geral": "baixa"
 }

@@ -115,6 +115,11 @@ def get_produtos() -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if not df.empty:
         df["categoria"] = df["id"].str.split("-").str[0]
+        # Coerce manual override to numeric/date (empty strings stay NaN/NaT).
+        if "preco_manual" in df.columns:
+            df["preco_manual"] = pd.to_numeric(df["preco_manual"], errors="coerce")
+        if "preco_manual_data" in df.columns:
+            df["preco_manual_data"] = df["preco_manual_data"].apply(_parse_sheets_date)
     return df
 
 
@@ -167,21 +172,26 @@ def _parse_sheets_date(value) -> pd.Timestamp:
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def get_compras() -> pd.DataFrame:
     service = get_service()
+    # Range extended to column M to pick up `frete` (L) and `desconto` (M)
+    # added by `scripts/migrate_compras_frete.py`. If the migration hasn't
+    # run, the columns come back as empty strings and stay numeric-coerced
+    # to NaN — downstream code treats NaN as zero.
     result = service.spreadsheets().values().get(
         spreadsheetId=_spreadsheet_id(),
-        range="Compras!A2:K",
+        range="Compras!A2:M",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
     rows = result.get("values", [])
     cols = ["id", "data", "produto_id", "fornecedor_id", "marca",
             "qtde_embalagens", "unidades_por_embalagem", "total_unidades",
-            "preco_total", "preco_unitario", "notas"]
+            "preco_total", "preco_unitario", "notas", "frete", "desconto"]
     if not rows:
         return pd.DataFrame(columns=cols)
     rows = [r + [""] * (len(cols) - len(r)) for r in rows]
     df = pd.DataFrame(rows, columns=cols)
     df["data"] = df["data"].apply(_parse_sheets_date)
-    for col in ("qtde_embalagens", "unidades_por_embalagem", "total_unidades", "preco_total", "preco_unitario"):
+    for col in ("qtde_embalagens", "unidades_por_embalagem", "total_unidades",
+                "preco_total", "preco_unitario", "frete", "desconto"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
@@ -317,6 +327,118 @@ def get_receita() -> pd.DataFrame:
     return ing[cols].copy()
 
 
+# --- Clientes / Vendas / Precos (Tema D) ------------------------------------
+# These three tabs are created by `scripts/migrate_clientes_vendas.py`. Until
+# the migration runs the loaders return empty DataFrames with the right
+# columns so the rest of the app keeps working without crashing.
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_clientes() -> pd.DataFrame:
+    cols = ["id", "nome", "tipo", "contato", "endereco",
+            "dia_entrega_preferido", "periodicidade", "observacoes",
+            "data_cadastro", "ativo"]
+    if not _has_sheet("Clientes"):
+        return pd.DataFrame(columns=cols)
+    service = get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=_spreadsheet_id(), range="Clientes!A2:J",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    rows = result.get("values", [])
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    rows = [r + [""] * (len(cols) - len(r)) for r in rows]
+    df = pd.DataFrame(rows, columns=cols)
+    df["data_cadastro"] = df["data_cadastro"].apply(_parse_sheets_date)
+
+    def _to_bool(v):
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("true", "verdadeiro", "1", "sim", "x", "yes")
+
+    df["ativo"] = df["ativo"].apply(_to_bool)
+    df = df[df["id"].astype(str).str.strip() != ""].reset_index(drop=True)
+    return df
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_vendas() -> pd.DataFrame:
+    cols = ["id", "data", "cliente_id", "tamanho_id", "qtde",
+            "preco_unit_efetivo", "preco_total", "canal",
+            "forma_pagamento", "status", "custo_unit_estimado", "notas"]
+    if not _has_sheet("Vendas"):
+        return pd.DataFrame(columns=cols)
+    service = get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=_spreadsheet_id(), range="Vendas!A2:L",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    rows = result.get("values", [])
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    rows = [r + [""] * (len(cols) - len(r)) for r in rows]
+    df = pd.DataFrame(rows, columns=cols)
+    df["data"] = df["data"].apply(_parse_sheets_date)
+    for c in ("qtde", "preco_unit_efetivo", "preco_total", "custo_unit_estimado"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df[df["id"].astype(str).str.strip() != ""].reset_index(drop=True)
+    return df
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_precos() -> pd.DataFrame:
+    cols = ["tamanho_id", "tipo_cliente", "qtde_min", "preco_unit", "notas"]
+    if not _has_sheet("Precos"):
+        return pd.DataFrame(columns=cols)
+    service = get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=_spreadsheet_id(), range="Precos!A2:E",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    rows = result.get("values", [])
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    rows = [r + [""] * (len(cols) - len(r)) for r in rows]
+    df = pd.DataFrame(rows, columns=cols)
+    for c in ("qtde_min", "preco_unit"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df[df["tamanho_id"].astype(str).str.strip() != ""].reset_index(drop=True)
+    return df
+
+
+def resolve_preco_unit(cliente_id: str, tamanho_id: str, qtde: int) -> float:
+    """
+    Resolve the unit price for a hypothetical sale.
+
+    Lookup order:
+      1. Precos: best matching (tamanho_id, tipo_cliente, qtde_min ≤ qtde).
+         If multiple, pick the one with the largest qtde_min.
+      2. Tamanhos.preco_venda as B2C fallback.
+      3. 0.0 — caller must require the user to enter a price manually.
+    """
+    clientes = get_clientes()
+    crow = clientes[clientes["id"] == cliente_id]
+    tipo = str(crow.iloc[0]["tipo"]).strip().upper() if not crow.empty else "B2C"
+
+    precos = get_precos()
+    if not precos.empty:
+        cand = precos[
+            (precos["tamanho_id"] == tamanho_id)
+            & (precos["tipo_cliente"].astype(str).str.upper() == tipo)
+            & (precos["qtde_min"] <= qtde)
+        ].sort_values("qtde_min", ascending=False)
+        if not cand.empty and pd.notna(cand.iloc[0]["preco_unit"]):
+            return float(cand.iloc[0]["preco_unit"])
+
+    tamanhos = get_tamanhos()
+    t = tamanhos[tamanhos["id"] == tamanho_id]
+    if not t.empty and pd.notna(t.iloc[0]["preco_venda"]):
+        return float(t.iloc[0]["preco_venda"])
+
+    return 0.0
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def get_embalagens_por_tamanho() -> pd.DataFrame:
     service = get_service()
@@ -359,15 +481,100 @@ def get_fornadas() -> pd.DataFrame:
 
 # --- Cost calculations -------------------------------------------------------
 
-def latest_unit_price(produto_id: str, compras: Optional[pd.DataFrame] = None) -> float:
-    """Most recent preco_unitario for a produto, or 0 if no compras."""
-    if compras is None:
-        compras = get_compras()
-    sub = compras[compras["produto_id"] == produto_id].dropna(subset=["data"])
+# Window size for the moving weighted average cost (WAC). A new Compra pushes
+# the oldest of the N out of the window. Sized so a one-off expensive emergency
+# purchase carries ≤ 1/N of the weight.
+WAC_WINDOW_N = 3
+
+
+def _weighted_avg_last_n(sub: pd.DataFrame, n: int = WAC_WINDOW_N) -> float:
+    """Weighted average of preco_unitario over the most recent N rows of `sub`,
+    weighted by total_unidades. Returns 0 if there's nothing usable."""
     if sub.empty:
         return 0.0
-    last = sub.sort_values("data", ascending=False).iloc[0]
-    return float(last["preco_unitario"] or 0)
+    last_n = sub.sort_values("data", ascending=False).head(n).copy()
+    last_n["preco_unitario"] = pd.to_numeric(last_n["preco_unitario"], errors="coerce").fillna(0)
+    last_n["total_unidades"] = pd.to_numeric(last_n["total_unidades"], errors="coerce").fillna(0)
+    total_qtde = last_n["total_unidades"].sum()
+    if total_qtde <= 0:
+        # Degenerate (zero qtdes recorded). Fall back to a simple mean so the
+        # cost doesn't silently zero out.
+        return float(last_n["preco_unitario"].mean() or 0)
+    return float((last_n["preco_unitario"] * last_n["total_unidades"]).sum() / total_qtde)
+
+
+def current_unit_price(
+    produto_id: str,
+    compras: Optional[pd.DataFrame] = None,
+    produtos: Optional[pd.DataFrame] = None,
+) -> float:
+    """
+    Resolved unit price for a produto. Applies, in order:
+
+      1. Manual override (Produtos.preco_manual) IF its date is more recent
+         than the most recent Compra of this produto — otherwise the override
+         is considered EXPIRED and falls through.
+      2. Weighted average of the last WAC_WINDOW_N compras, weighted by
+         total_unidades. With fewer compras, averages whatever exists.
+      3. Zero if there's nothing at all.
+    """
+    if compras is None:
+        compras = get_compras()
+    if produtos is None:
+        produtos = get_produtos()
+
+    sub = compras[compras["produto_id"] == produto_id].dropna(subset=["data"])
+    last_compra_date = sub["data"].max() if not sub.empty else pd.NaT
+
+    if not produtos.empty and "preco_manual" in produtos.columns:
+        prow = produtos[produtos["id"] == produto_id]
+        if not prow.empty:
+            manual = prow.iloc[0].get("preco_manual")
+            manual_date = prow.iloc[0].get("preco_manual_data")
+            if pd.notna(manual) and float(manual) > 0:
+                if pd.isna(last_compra_date) or (
+                    pd.notna(manual_date) and manual_date >= last_compra_date
+                ):
+                    return float(manual)
+
+    return _weighted_avg_last_n(sub)
+
+
+def price_origin(
+    produto_id: str,
+    compras: Optional[pd.DataFrame] = None,
+    produtos: Optional[pd.DataFrame] = None,
+) -> str:
+    """Return a short label describing where current_unit_price came from.
+
+    Values: "manual" (override is still active), "wac" (computed from compras),
+    or "none" (no compras and no override).
+    """
+    if compras is None:
+        compras = get_compras()
+    if produtos is None:
+        produtos = get_produtos()
+
+    sub = compras[compras["produto_id"] == produto_id].dropna(subset=["data"])
+    last_compra_date = sub["data"].max() if not sub.empty else pd.NaT
+
+    if not produtos.empty and "preco_manual" in produtos.columns:
+        prow = produtos[produtos["id"] == produto_id]
+        if not prow.empty:
+            manual = prow.iloc[0].get("preco_manual")
+            manual_date = prow.iloc[0].get("preco_manual_data")
+            if pd.notna(manual) and float(manual) > 0:
+                if pd.isna(last_compra_date) or (
+                    pd.notna(manual_date) and manual_date >= last_compra_date
+                ):
+                    return "manual"
+
+    return "wac" if not sub.empty else "none"
+
+
+def latest_unit_price(produto_id: str, compras: Optional[pd.DataFrame] = None) -> float:
+    """Deprecated. Use `current_unit_price`. Kept so older call sites don't break."""
+    return current_unit_price(produto_id, compras=compras)
 
 
 def resolve_receita_id_for_tamanho(tamanho_row) -> Optional[str]:
@@ -428,7 +635,9 @@ def calc_custo_alimento_unid(tamanho_id: str) -> tuple[float, pd.DataFrame]:
     breakdown = receita.copy()
     if breakdown.empty:
         return 0.0, breakdown
-    breakdown["preco_unit_atual"] = breakdown["produto_id"].apply(lambda p: latest_unit_price(p, compras))
+    breakdown["preco_unit_atual"] = breakdown["produto_id"].apply(
+        lambda p: current_unit_price(p, compras=compras, produtos=produtos)
+    )
     breakdown["custo_na_receita"] = breakdown["qtde"] * breakdown["preco_unit_atual"]
     # Join product name for display. `nome` may already exist in the
     # ingredientes table; we suffix the joined column to avoid clobbering and
@@ -450,7 +659,9 @@ def calc_custo_embalagem_unid(tamanho_id: str) -> tuple[float, pd.DataFrame]:
     sub = emb[emb["tamanho_id"] == tamanho_id].copy()
     if sub.empty:
         return 0.0, sub
-    sub["preco_unit_atual"] = sub["produto_id"].apply(lambda p: latest_unit_price(p, compras))
+    sub["preco_unit_atual"] = sub["produto_id"].apply(
+        lambda p: current_unit_price(p, compras=compras, produtos=produtos)
+    )
     sub["custo_por_unidade"] = sub["qtde_por_unidade"] * sub["preco_unit_atual"]
     sub = sub.merge(
         produtos[["id", "nome"]].rename(columns={"id": "produto_id", "nome": "produto_nome"}),
