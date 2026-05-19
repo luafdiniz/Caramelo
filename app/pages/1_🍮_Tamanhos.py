@@ -111,10 +111,10 @@ with tab_list:
         df = df.sort_values(sort_map[sort_by], ascending=asc, na_position="last")
         # Render as expandable cards
         for _, row in df.iterrows():
-            # Surface auto-added relacionados from the previous save, if any.
+            # Relacionados auto-include removido — chave legacy ainda limpa
+            # do session_state pra não vazar entre reruns se vier de versão antiga.
             _auto_key = f"_auto_added_{row['id']}"
             if _auto_key in st.session_state:
-                st.info(f"💡 {row['id']}: auto-incluí {st.session_state[_auto_key]} (relacionados).")
                 del st.session_state[_auto_key]
             with st.container(border=True):
                 col1, col2 = st.columns([3, 2])
@@ -441,24 +441,12 @@ with tab_list:
                                 service = data.get_service()
                                 ssid = data._spreadsheet_id()
 
-                                # Auto-include relacionados: if any selected produto has related
-                                # IDs configured in the Produtos.Relacionados column, add them
-                                # too (default qty 1) before saving.
-                                # Only runs when the user is actively editing embalagens —
-                                # otherwise edited_qtys is empty and we'd add nothing anyway.
+                                # Feature "Relacionados" removida: depois da consolidação de
+                                # Compras (pote+tampa+lacre virou um produto único só), o
+                                # auto-include não tinha mais utilidade. O que a usuária
+                                # selecionar no multiselect é exatamente o que vai pra
+                                # Embalagens_Por_Tamanho.
                                 auto_added = []
-                                if embalagens_edit_active and not produtos_df.empty:
-                                    for pid in list(edited_qtys.keys()):
-                                        prod_row = produtos_df[produtos_df["id"] == pid]
-                                        if prod_row.empty:
-                                            continue
-                                        rels = prod_row.iloc[0].get("relacionados") or []
-                                        if not isinstance(rels, list):
-                                            rels = []
-                                        for rel_id in rels:
-                                            if rel_id not in edited_qtys:
-                                                edited_qtys[rel_id] = 1.0
-                                                auto_added.append(rel_id)
 
                                 # Find tamanho row number
                                 all_ids = service.spreadsheets().values().get(
@@ -709,22 +697,9 @@ with tab_new:
         if not selected_pkgs:
             st.warning("Você não selecionou nenhuma embalagem. O custo de embalagem ficará zero.")
 
-        # Auto-include relacionados: any selected produto with related IDs in
-        # Produtos.Relacionados gets its trio added (default qty 1).
-        auto_added = []
-        if not produtos.empty:
-            for pid in list(pkg_quantities.keys()):
-                prod_row = produtos[produtos["id"] == pid]
-                if prod_row.empty:
-                    continue
-                rels = prod_row.iloc[0].get("relacionados") or []
-                if not isinstance(rels, list):
-                    rels = []
-                for rel_id in rels:
-                    if rel_id not in pkg_quantities:
-                        pkg_quantities[rel_id] = 1.0
-                        selected_pkgs = list(selected_pkgs) + [rel_id]
-                        auto_added.append(rel_id)
+        # Feature "Relacionados" removida (post-consolidação de Compras).
+        # O usuário seleciona explicitamente o que entra em pkg_quantities.
+        auto_added: list = []
 
         # Generate next TAM-NNN ID
         try:
@@ -788,8 +763,6 @@ with tab_new:
 
             data.invalidate_cache()
             st.success(f"✅ Tamanho **{new_id} — {nome}** criado!")
-            if auto_added:
-                st.info(f"💡 Auto-incluí também: {', '.join(auto_added)} (relacionados aos que você selecionou).")
             st.balloons()
 
             # Show preview of the cost

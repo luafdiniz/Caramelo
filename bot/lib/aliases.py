@@ -10,10 +10,16 @@ Stored in an `Aliases` tab in the spreadsheet (auto-created on first use):
 `pack_size` is only meaningful for PRODUTO aliases: how many units of the
 product come per "embalagem" (the receipt line item). Empty/missing = unknown.
 
+**Sentinel `resolved_id="SKIP"`**: convenção pra produtos que devem ser
+sempre ignorados quando aparecem numa nota mista (ex: A-011 mapeia
+"BEB ENERG RED BULL 250ML" → SKIP, evitando que itens pessoais entrem em
+compras do negócio). O bot detecta SKIP e pula o item sem perguntar.
+
 Usage:
-- check(spreadsheet_id, "PRODUTO", text) → returns resolved_id or None
+- check(spreadsheet_id, "PRODUTO", text) → returns resolved_id (or "SKIP") or None
 - get_alias(spreadsheet_id, "PRODUTO", text) → returns full row dict or None
 - save(spreadsheet_id, "PRODUTO", text, "FOR-002", pack_size=5)
+- save(spreadsheet_id, "PRODUTO", text, "SKIP") — pra ignorar item recorrente
 """
 
 from datetime import date

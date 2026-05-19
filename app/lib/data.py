@@ -572,9 +572,20 @@ def price_origin(
     return "wac" if not sub.empty else "none"
 
 
-def latest_unit_price(produto_id: str, compras: Optional[pd.DataFrame] = None) -> float:
-    """Deprecated. Use `current_unit_price`. Kept so older call sites don't break."""
-    return current_unit_price(produto_id, compras=compras)
+def __getattr__(name: str):
+    """Module-level attribute hook.
+
+    `latest_unit_price` foi removida — não respeitava override manual nem WAC.
+    Se algum caller ainda chamar, levanta AttributeError com mensagem clara
+    em vez de retornar dado errado silenciosamente.
+    """
+    if name == "latest_unit_price":
+        raise AttributeError(
+            "data.latest_unit_price foi removida em 2026-05-19. "
+            "Use data.current_unit_price(produto_id, compras=..., produtos=...) — "
+            "ela respeita override manual (Produtos.G/H) + WAC das últimas 3 compras."
+        )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def resolve_receita_id_for_tamanho(tamanho_row) -> Optional[str]:
