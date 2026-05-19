@@ -67,10 +67,27 @@ def _find_row(rows, col_idx, value):
 def _float(v) -> float:
     if v is None or v == "":
         return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    # Strip "R$", spaces, and convert pt-BR decimal comma to dot.
+    s = str(v).strip().replace("R$", "").replace(" ", "").replace(" ", "")
+    # Handle pt-BR thousand separator: "1.234,56" → "1234.56"
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
     try:
-        return float(str(v).replace(",", "."))
+        return float(s)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _read_unformatted(svc, ssid, rng):
+    """Read a range with UNFORMATTED_VALUE so currency cells come back as floats, not 'R$ X,YZ' strings."""
+    return svc.spreadsheets().values().get(
+        spreadsheetId=ssid, range=rng,
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute().get("values", [])
 
 
 def main():
@@ -79,6 +96,11 @@ def main():
     parser.add_argument("--new-total", required=True, type=float, help="New preco_total for the kept compra (e.g. 81.14)")
     parser.add_argument("--merge-compras", nargs="+", default=[], help="Compra IDs to delete (e.g. C-046 C-048)")
     parser.add_argument("--delete-produtos", nargs="+", default=[], help="Produto IDs to delete after merging (e.g. EMB-021 EMB-023)")
+    parser.add_argument(
+        "--also-remove-from-tamanhos", action="store_true",
+        help="Also remove the to-be-deleted produtos from any Embalagens_Por_Tamanho they appear in. "
+             "Without this flag, the script aborts if such refs exist."
+    )
     parser.add_argument("--apply", action="store_true", help="Apply changes (default is dry-run)")
     args = parser.parse_args()
 
@@ -91,11 +113,12 @@ def main():
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"=== Consolidate Compras — {mode} ===\n")
 
-    # --- Read all relevant tabs once
-    compras = svc.spreadsheets().values().get(spreadsheetId=ssid, range=COMPRAS_RANGE).execute().get("values", [])
-    produtos = svc.spreadsheets().values().get(spreadsheetId=ssid, range=PRODUTOS_RANGE).execute().get("values", [])
-    aliases = svc.spreadsheets().values().get(spreadsheetId=ssid, range=ALIASES_RANGE).execute().get("values", [])
-    embt = svc.spreadsheets().values().get(spreadsheetId=ssid, range=EMBT_RANGE).execute().get("values", [])
+    # --- Read all relevant tabs once. UNFORMATTED_VALUE so currency cells
+    # come back as floats, not "R$ X,YZ" strings.
+    compras = _read_unformatted(svc, ssid, COMPRAS_RANGE)
+    produtos = _read_unformatted(svc, ssid, PRODUTOS_RANGE)
+    aliases = _read_unformatted(svc, ssid, ALIASES_RANGE)
+    embt = _read_unformatted(svc, ssid, EMBT_RANGE)
 
     # Compras header (row 1) — figure out column indices for the fields we touch.
     # Standard schema: A=id, B=data, C=produto_id, D=fornecedor_id, E=marca,
@@ -154,6 +177,7 @@ def main():
     print(f"DELETE PRODUTOS: {len(args.delete_produtos)}")
     abort = False
     produto_action_rows = {}  # produto_id -> sheet row number
+    embt_refs_to_clear = []  # list of (sheet_row_number, row_data) to clear if --also-remove-from-tamanhos
     for pid in args.delete_produtos:
         rn, r = _find_row(produtos[1:], 0, pid)
         if rn is None:
@@ -182,10 +206,17 @@ def main():
             if e and len(e) > 1 and e[1] == pid
         ]
         if embt_refs:
-            print(f"    ❌ Referenciado em Embalagens_Por_Tamanho ({len(embt_refs)} linhas):")
-            for rn2, r2 in embt_refs:
-                print(f"      row {rn2}: tamanho {r2[0]}")
-            abort = True
+            if args.also_remove_from_tamanhos:
+                print(f"    ⚠️  Referenciado em Embalagens_Por_Tamanho ({len(embt_refs)} linhas) — será limpo:")
+                for rn2, r2 in embt_refs:
+                    print(f"      row {rn2}: tamanho {r2[0]} (será removido)")
+                    embt_refs_to_clear.append(rn2)
+            else:
+                print(f"    ❌ Referenciado em Embalagens_Por_Tamanho ({len(embt_refs)} linhas):")
+                for rn2, r2 in embt_refs:
+                    print(f"      row {rn2}: tamanho {r2[0]}")
+                print(f"      💡 Rode de novo com --also-remove-from-tamanhos pra tirar essas embalagens dos tamanhos.")
+                abort = True
 
         # Aliases that resolved to this produto (will be deleted along with the produto)
         alias_refs = [
@@ -240,7 +271,15 @@ def main():
                 ).execute()
                 print(f"  ✓ Aliases row {rn} cleared (was → {pid})")
 
-    # 4. Clear produtos rows
+    # 4. Clear Embalagens_Por_Tamanho refs for produtos being deleted
+    for rn in embt_refs_to_clear:
+        svc.spreadsheets().values().clear(
+            spreadsheetId=ssid,
+            range=f"Embalagens_Por_Tamanho!A{rn}:D{rn}",
+        ).execute()
+        print(f"  ✓ Embalagens_Por_Tamanho row {rn} cleared")
+
+    # 5. Clear produtos rows
     for pid, rn in produto_action_rows.items():
         svc.spreadsheets().values().clear(
             spreadsheetId=ssid,
