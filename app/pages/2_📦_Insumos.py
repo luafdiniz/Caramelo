@@ -334,6 +334,11 @@ with tab_tabela:
 
             if not ins_edit_active:
                 # --- VIEW MODE (st.table, brand-styled like Ingredientes da receita) ---
+                # Botão "Editar tabela" duplicado em cima e embaixo — tabela
+                # pode ser longa e rolar até o fim só pra clicar incomoda.
+                if st.button("✏️ Editar tabela", key="ins_tabela_edit_btn_top"):
+                    st.session_state[ins_edit_key] = True
+                    st.rerun()
                 disp = pd.DataFrame({
                     "ID": base_filtered["id"].values,
                     "🍯": [CAT_EMOJI.get(c, "•") for c in base_filtered["categoria"].values],
