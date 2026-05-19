@@ -359,7 +359,12 @@ with tab_list:
                                 raw_val = pkg.get("qtde_por_unidade")
                                 qval = float(raw_val) if pd.notna(raw_val) else 1.0
                                 pid = pkg["produto_id"]
-                                preco_unit = data.latest_unit_price(pid)
+                                # `current_unit_price` honors a manual override
+                                # on Produtos.G/H when still valid (no newer
+                                # Compra), so passing `produtos=produtos_df`
+                                # keeps the embalagem cost consistent with
+                                # what the Insumos page shows for the same id.
+                                preco_unit = data.current_unit_price(pid, produtos=produtos_df)
                                 editor_rows.append({
                                     "ID": pid,
                                     "Nome": pkg["produto_nome"],
@@ -369,7 +374,7 @@ with tab_list:
                                     "Remover": False,
                                 })
                             for npkg in added_pkgs:
-                                preco_unit = data.latest_unit_price(npkg)
+                                preco_unit = data.current_unit_price(npkg, produtos=produtos_df)
                                 editor_rows.append({
                                     "ID": npkg,
                                     "Nome": name_by_id.get(npkg, ""),

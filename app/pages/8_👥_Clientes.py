@@ -160,13 +160,36 @@ edited = st.data_editor(
     },
 )
 
-# Diff and save
+# Diff and save.
+#
+# Two guards on deletion (FLAG C1):
+#  1. `CLI-000` is the "Cliente Avulso" sentinel used by walk-in / balcão
+#     sales that don't have a real customer record. Deleting it would
+#     orphan every sale that points to it, so it's hard-blocked.
+#  2. Any other cliente that has at least one Venda pointing to it is also
+#     blocked from deletion — the warning lists the count so the user can
+#     decide to either reassign those vendas first or just soft-delete by
+#     unticking Ativo.
+vendas_df = data.get_vendas() if data._has_sheet("Vendas") else pd.DataFrame()
+vendas_by_cliente: dict[str, int] = {}
+if not vendas_df.empty:
+    vendas_by_cliente = vendas_df.groupby("cliente_id").size().to_dict()
+
 changes: list[dict] = []
 deletions: list[dict] = []
+skipped_cli000 = False
+blocked_with_vendas: list[dict] = []
 for i, row in edited.iterrows():
     orig = editor_df.iloc[i]
     cid = row["ID"]
     if bool(row["Excluir"]):
+        if cid == "CLI-000":
+            skipped_cli000 = True
+            continue
+        n_vendas = int(vendas_by_cliente.get(cid, 0))
+        if n_vendas > 0:
+            blocked_with_vendas.append({"id": cid, "nome": row["Nome"], "n_vendas": n_vendas})
+            continue
         deletions.append({"id": cid, "nome": row["Nome"]})
         continue
     changed = any(
@@ -186,6 +209,24 @@ for i, row in edited.iterrows():
             "obs": str(row["Obs."] or "").strip(),
             "ativo": bool(row["Ativo"]),
         })
+
+if skipped_cli000:
+    st.warning(
+        "**CLI-000 (Cliente Avulso) não pode ser excluído** — é a referência "
+        "pra vendas balcão sem cadastro. A marcação **Excluir** foi ignorada "
+        "pra esse cliente."
+    )
+
+if blocked_with_vendas:
+    st.error(
+        "**Exclusão bloqueada** — os clientes abaixo têm vendas associadas. "
+        "Reatribua ou cancele as vendas primeiro, ou simplesmente desmarque "
+        "**Ativo** pra ocultar dos selectboxes:\n\n- "
+        + "\n- ".join(
+            f"`{b['id']}` ({b['nome']}) — **{b['n_vendas']}** venda(s)"
+            for b in blocked_with_vendas
+        )
+    )
 
 has_changes = bool(changes or deletions)
 if has_changes:

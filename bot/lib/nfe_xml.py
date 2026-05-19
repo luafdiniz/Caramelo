@@ -168,6 +168,7 @@ def parse_nfe_xml(xml_bytes: bytes) -> dict:
     total = _to_float(_findtext(total_icms, "vNF"))
     itens = [_parse_item(det) for det in inf_nfe.findall("det")]
     observacoes = _extract_observacoes(inf_nfe)
+    frete, desconto = _extract_frete_desconto(inf_nfe, total_icms)
 
     return {
         "fornecedor": fornecedor,
@@ -175,5 +176,33 @@ def parse_nfe_xml(xml_bytes: bytes) -> dict:
         "total": total,
         "itens": itens,
         "observacoes": observacoes,
+        "frete": frete,
+        "desconto": desconto,
         "confianca_geral": "alta",
     }
+
+
+def _extract_frete_desconto(
+    inf_nfe: ET.Element, total_icms: Optional[ET.Element]
+) -> tuple[float, float]:
+    """Return (frete, desconto) totals for the NF-e.
+
+    Preferência: `vFrete` / `vDesc` no bloco `<ICMSTot>` (totalizador da
+    nota — é o que a SEFAZ obriga a estar correto). Se algum estiver
+    ausente ou zerado, soma os `vFrete` / `vDesc` de cada `<det>/<prod>`
+    como fallback (NF-e antiga ou emitente que só preenche por item).
+    """
+    frete = _to_float(_findtext(total_icms, "vFrete"))
+    desconto = _to_float(_findtext(total_icms, "vDesc"))
+
+    if frete == 0.0:
+        frete = sum(
+            _to_float(_findtext(det.find("prod"), "vFrete"))
+            for det in inf_nfe.findall("det")
+        )
+    if desconto == 0.0:
+        desconto = sum(
+            _to_float(_findtext(det.find("prod"), "vDesc"))
+            for det in inf_nfe.findall("det")
+        )
+    return frete, desconto

@@ -14,9 +14,11 @@ What it does:
     1. Looks up the old produto in Produtos (errors out if not found).
     2. Picks the next free ID under the new categoria prefix (e.g. EMB-019).
     3. Lists every reference in Compras (col C: produto_id), Aliases
-       (col D: resolved_id) and Embalagens_Por_Tamanho (col B: produto_id).
+       (col D: resolved_id), Embalagens_Por_Tamanho (col B: produto_id)
+       and Receita_Ingredientes (col B: produto_id).
     4. With --apply:
-        - Creates new row in Produtos with the new ID + same data.
+        - Creates new row in Produtos with the new ID + same data (including
+          the manual price override columns G/H if set).
         - Updates each reference in place.
         - Clears the old row in Produtos.
 
@@ -81,9 +83,13 @@ def main():
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"=== Migrate Categoria — {mode} ===\n")
 
-    # 1. Find the source produto
+    # 1. Find the source produto. Range now extends through column H to
+    # pick up Preco_manual (G) and Preco_manual_data (H), which were added
+    # by the WAC + manual override migration. If the columns are empty (no
+    # override active), we still write them back as empty strings — that
+    # keeps the new produto's row width consistent with the rest of the tab.
     produtos_rows = svc.spreadsheets().values().get(
-        spreadsheetId=ssid, range="Produtos!A:F"
+        spreadsheetId=ssid, range="Produtos!A:H"
     ).execute().get("values", [])
     source_row = None
     source_index = None
@@ -97,12 +103,14 @@ def main():
         sys.exit(1)
 
     print(f"Source produto (row {source_index}):")
-    print(f"  ID:        {source_row[0]}")
-    print(f"  Nome:      {source_row[1] if len(source_row) > 1 else ''}")
-    print(f"  Unidade:   {source_row[2] if len(source_row) > 2 else ''}")
-    print(f"  Notas:     {source_row[3] if len(source_row) > 3 else ''}")
-    print(f"  Relac.:    {source_row[4] if len(source_row) > 4 else ''}")
-    print(f"  Marca pd.: {source_row[5] if len(source_row) > 5 else ''}")
+    print(f"  ID:           {source_row[0]}")
+    print(f"  Nome:         {source_row[1] if len(source_row) > 1 else ''}")
+    print(f"  Unidade:      {source_row[2] if len(source_row) > 2 else ''}")
+    print(f"  Notas:        {source_row[3] if len(source_row) > 3 else ''}")
+    print(f"  Relac.:       {source_row[4] if len(source_row) > 4 else ''}")
+    print(f"  Marca pd.:    {source_row[5] if len(source_row) > 5 else ''}")
+    print(f"  Preco_manual: {source_row[6] if len(source_row) > 6 else ''}")
+    print(f"  Preco_data:   {source_row[7] if len(source_row) > 7 else ''}")
 
     current_cat = args.from_id.split("-", 1)[0] if "-" in args.from_id else ""
     if current_cat == args.to_categoria:
@@ -147,6 +155,34 @@ def main():
     for row_num, r in embt_refs:
         print(f"  Embalagens_Por_Tamanho row {row_num + 1}: {r}")
 
+    # Receita_Ingredientes (col B = produto_id). Tab may not exist on
+    # pre-migration spreadsheets — handle that quietly.
+    ri_refs = []
+    try:
+        ri_rows = svc.spreadsheets().values().get(
+            spreadsheetId=ssid, range="Receita_Ingredientes!A:F"
+        ).execute().get("values", [])
+        ri_refs = [
+            (i + 1, r) for i, r in enumerate(ri_rows[1:], start=1)
+            if r and len(r) > 1 and r[1] == args.from_id
+        ]
+    except Exception:
+        # Tab not present yet — older schema with `Receita` (no receita_id col).
+        # That one is keyed by produto_id in col A.
+        try:
+            ri_rows = svc.spreadsheets().values().get(
+                spreadsheetId=ssid, range="Receita!A:D"
+            ).execute().get("values", [])
+            ri_refs = [
+                (i + 1, r) for i, r in enumerate(ri_rows[1:], start=1)
+                if r and len(r) > 0 and r[0] == args.from_id
+            ]
+        except Exception:
+            ri_refs = []
+    print(f"\nReceita_Ingredientes references: {len(ri_refs)}")
+    for row_num, r in ri_refs:
+        print(f"  Receita_Ingredientes row {row_num + 1}: {r}")
+
     if not args.apply:
         print("\n=== DRY-RUN: no changes written. Re-run with --apply to migrate. ===")
         sys.exit(0)
@@ -154,20 +190,28 @@ def main():
     # 4. APPLY
     print("\n=== APPLYING ===\n")
 
-    # 4a. Create new produto row at the end of Produtos
+    # 4a. Create new produto row at the end of Produtos. We carry over
+    # the manual price override (G/H) too — keeping it on the migrated id
+    # is exactly what the user expects: the produto is the same physical
+    # thing, only its categoria prefix changed.
     print(f"→ Inserting new Produtos row for {new_id}...")
     nome = source_row[1] if len(source_row) > 1 else ""
     unidade = source_row[2] if len(source_row) > 2 else ""
     notas = source_row[3] if len(source_row) > 3 else ""
     relac = source_row[4] if len(source_row) > 4 else ""
     marca_pd = source_row[5] if len(source_row) > 5 else ""
+    preco_manual = source_row[6] if len(source_row) > 6 else ""
+    preco_manual_data = source_row[7] if len(source_row) > 7 else ""
 
     next_row = len(produtos_rows) + 1
     svc.spreadsheets().values().update(
         spreadsheetId=ssid,
         range=f"Produtos!A{next_row}",
         valueInputOption="USER_ENTERED",
-        body={"values": [[new_id, nome, unidade, notas, relac, marca_pd]]},
+        body={"values": [[
+            new_id, nome, unidade, notas, relac, marca_pd,
+            preco_manual, preco_manual_data,
+        ]]},
     ).execute()
     print(f"  ✓ {new_id} created.")
 
@@ -204,11 +248,34 @@ def main():
         ).execute()
         print(f"  ✓ Embalagens_Por_Tamanho!B{sheet_row} updated.")
 
-    # 4e. Clear the old Produtos row
+    # 4d-bis. Update Receita_Ingredientes references. New schema has
+    # produto_id at col B; legacy `Receita` tab has it at col A.
+    ri_uses_new_schema = True
+    try:
+        svc.spreadsheets().values().get(
+            spreadsheetId=ssid, range="Receita_Ingredientes!A1:A1"
+        ).execute()
+    except Exception:
+        ri_uses_new_schema = False
+    for row_num, _ in ri_refs:
+        sheet_row = row_num + 1
+        if ri_uses_new_schema:
+            tab, col = "Receita_Ingredientes", "B"
+        else:
+            tab, col = "Receita", "A"
+        svc.spreadsheets().values().update(
+            spreadsheetId=ssid,
+            range=f"{tab}!{col}{sheet_row}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[new_id]]},
+        ).execute()
+        print(f"  ✓ {tab}!{col}{sheet_row} updated.")
+
+    # 4e. Clear the old Produtos row (full A:H so G/H aren't orphaned).
     print(f"\n→ Clearing old Produtos row {source_index} ({args.from_id})...")
     svc.spreadsheets().values().clear(
         spreadsheetId=ssid,
-        range=f"Produtos!A{source_index}:F{source_index}",
+        range=f"Produtos!A{source_index}:H{source_index}",
     ).execute()
     print(f"  ✓ Old row cleared.")
 

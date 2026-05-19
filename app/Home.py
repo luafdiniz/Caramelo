@@ -74,7 +74,9 @@ if not compras.empty:
     display["data"] = display["data"].dt.strftime("%d/%m/%Y")
     display["preco_total"] = display["preco_total"].apply(brl)
     display.columns = ["Data", "Produto", "Marca", "Preço total", "Fornecedor"]
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    # Read-only summary — `st.table` matches the brand-styled look used
+    # across the rest of the app (Vendas histórico, Receita ingredientes).
+    st.table(display.set_index("Data"))
 else:
     st.info("Nenhuma compra registrada ainda.")
 
@@ -119,6 +121,6 @@ if not compras.empty:
     if recs:
         rec_df = pd.DataFrame(recs).sort_values("vs_media", ascending=False)
         rec_df.columns = ["Produto", "Fornecedor recomendado", "Preço médio neles", "Comparado à média geral"]
-        st.dataframe(rec_df, hide_index=True, use_container_width=True)
+        st.table(rec_df.set_index("Produto"))
     else:
         st.info("Conforme você registrar mais compras, recomendações vão aparecer aqui.")

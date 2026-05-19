@@ -26,6 +26,11 @@ FIXTURE_PATH = os.path.join(
     "fixtures",
     "sample_nfe.xml",
 )
+FIXTURE_PATH_FRETE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures",
+    "sample_nfe_com_frete.xml",
+)
 
 
 # Contador global de assertions (pra mostrar quantas passaram)
@@ -80,6 +85,23 @@ def test_happy_path():
     check("Venda direta ao consumidor final" in obs, "observacoes contém infCpl")
     check("Cor branca" in obs, "observacoes contém infAdProd do item 2")
     check(" | " in obs, "observacoes usa separador ' | '")
+
+    # Fixture sem frete e sem desconto — devem vir como 0.0
+    check(result.get("frete") == 0.0, f"frete == 0.0 (got {result.get('frete')})")
+    check(result.get("desconto") == 0.0, f"desconto == 0.0 (got {result.get('desconto')})")
+
+
+def test_frete_desconto_extraction():
+    print("\n[test_frete_desconto_extraction] NF-e com vFrete=5 e vDesc=2")
+    with open(FIXTURE_PATH_FRETE, "rb") as f:
+        xml_bytes = f.read()
+
+    result = parse_nfe_xml(xml_bytes)
+    check(result["fornecedor"] == "FORNECEDOR COM FRETE LTDA", "fornecedor parseado")
+    check(result["total"] == 23.00, f"total == 23.00 (got {result['total']})")
+    check(len(result["itens"]) == 1, f"1 item (got {len(result['itens'])})")
+    check(result["frete"] == 5.00, f"frete == 5.00 (got {result['frete']})")
+    check(result["desconto"] == 2.00, f"desconto == 2.00 (got {result['desconto']})")
 
 
 def test_nfeproc_wrapper():
@@ -142,6 +164,7 @@ def main():
         test_nfeproc_wrapper,
         test_invalid_xml_raises,
         test_malformed_xml_raises,
+        test_frete_desconto_extraction,
     ]
     for t in tests:
         try:

@@ -51,7 +51,20 @@ PACK_SIZE_PRESETS = [1, 5, 10, 12, 24, 30]
 # Entry points — photo / document / xml all funnel into _start_review_flow
 # ============================================================================
 
+def _clear_prior_state(chat_id: int, service=None) -> None:
+    """Drop any pending state for this chat before starting a new flow.
+
+    Mirrors what /novo and /compra do — keeps the bot from mixing a fresh
+    photo/PDF/XML upload with whatever interactive flow was still open.
+    """
+    service = service or sheets.get_service()
+    old = state.find_latest_active_state_id(_spreadsheet_id(), chat_id, service=service)
+    if old:
+        state.delete_state(_spreadsheet_id(), old, service=service)
+
+
 def handle_photo(chat_id: int, file_id: str, image_bytes: bytes) -> None:
+    _clear_prior_state(chat_id)
     tg.send_message(chat_id, "📸 Recebi a foto, processando...")
     try:
         receipt = gemini.parse_receipt(image_bytes, mime_type="image/jpeg")
@@ -79,6 +92,7 @@ def handle_document(
     is_pdf = mime_lower == "application/pdf" or fname_lower.endswith(".pdf") or file_bytes[:4] == b"%PDF"
 
     if is_xml:
+        _clear_prior_state(chat_id)
         tg.send_message(chat_id, "📄 Recebi a NF-e XML, processando...")
         try:
             receipt = nfe_xml.parse_nfe_xml(file_bytes)
@@ -86,6 +100,7 @@ def handle_document(
             tg.send_message(chat_id, f"❌ Erro ao processar XML: <code>{_esc(e)}</code>")
             return
     elif is_pdf:
+        _clear_prior_state(chat_id)
         tg.send_message(chat_id, "📄 Recebi o PDF, processando...")
         try:
             receipt = gemini.parse_receipt(file_bytes, mime_type="application/pdf")
@@ -361,7 +376,7 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
             )
             return
         # Sort by categoria prefix order, then by name
-        _cat_order = {"ALI": 0, "FOR": 1, "EMB": 2, "EQP": 3, "OPR": 4}
+        _cat_order = {"ALI": 0, "FOR": 1, "EMB": 2, "GRA": 3, "EQP": 4, "OPR": 5}
         def _sort_key(p):
             cat = (p["id"].split("-")[0] if "-" in p["id"] else p["id"])
             return (_cat_order.get(cat, 99), (p.get("nome") or "").lower())
@@ -432,7 +447,7 @@ def handle_callback(chat_id: int, message_id: int, callback_data: str, callback_
     elif action == "icreate":  # item: create new product
         idx = int(parts[2])
         item = payload["itens"][idx]
-        if len(parts) > 3 and parts[3] in ("ALI", "FOR", "EMB", "EQP", "OPR"):
+        if len(parts) > 3 and parts[3] in ("ALI", "FOR", "EMB", "GRA", "EQP", "OPR"):
             categoria = parts[3]
         else:
             categoria = item.get("categoria") or "ALI"
@@ -686,6 +701,7 @@ CATEGORIA_LABEL = {
     "ALI": "🍯 Alimento (entra na receita)",
     "FOR": "🥣 Forma",
     "EMB": "📦 Embalagem",
+    "GRA": "🖨️ Gráfica (impressos)",
     "EQP": "🔧 Equipamento (durável)",
     "OPR": "🧻 Operacional (papel toalha, palito, etc.)",
 }
@@ -745,6 +761,7 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
             pick_button,
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['ALI']}", "callback_data": f"icreate:{state_id}:{idx}:ALI"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EMB']}", "callback_data": f"icreate:{state_id}:{idx}:EMB"}],
+            [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['GRA']}", "callback_data": f"icreate:{state_id}:{idx}:GRA"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['EQP']}", "callback_data": f"icreate:{state_id}:{idx}:EQP"}],
             [{"text": f"➕ Cadastrar como {CATEGORIA_LABEL['OPR']}", "callback_data": f"icreate:{state_id}:{idx}:OPR"}],
             hint_button,
@@ -1250,6 +1267,7 @@ CATEGORIA_PICK_BUTTONS = [
     [{"text": "🍯 Alimento (ingrediente)", "callback_data_value": "ALI"}],
     [{"text": "🥣 Forma", "callback_data_value": "FOR"}],
     [{"text": "📦 Embalagem", "callback_data_value": "EMB"}],
+    [{"text": "🖨️ Gráfica (impressos)", "callback_data_value": "GRA"}],
     [{"text": "🔧 Equipamento durável", "callback_data_value": "EQP"}],
     [{"text": "🧻 Operacional (consumível)", "callback_data_value": "OPR"}],
 ]

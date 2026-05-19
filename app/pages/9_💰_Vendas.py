@@ -78,6 +78,15 @@ with tab_nova:
         preco_resolvido = data.resolve_preco_unit(cliente_id, tamanho_id, int(qtde))
         st.caption(f"Sugerido: {brl(preco_resolvido) if preco_resolvido > 0 else '—'}")
 
+    if preco_resolvido == 0:
+        # Loud warning so the user doesn't silently register a R$ 0 sale.
+        # The Registrar button stays disabled (further down) until they
+        # type a positive value into the manual price input below.
+        st.warning(
+            "Não há preço cadastrado pra esta combinação cliente/tamanho/qtde. "
+            "Digite o preço manualmente em **Preço unitário (R$)** abaixo."
+        )
+
     preco_unit = st.number_input(
         "Preço unitário (R$)",
         min_value=0.0, value=float(preco_resolvido), step=1.0,

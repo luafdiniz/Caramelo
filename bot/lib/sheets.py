@@ -231,6 +231,10 @@ def distribute_frete_desconto(
     Falls back to equal split when subtotal == 0. Raises ValueError if the
     desconto would push any item negative — the user must fix the input.
 
+    Values are rounded to 2 decimal places (cents). Any rounding remainder
+    is absorbed by the last item so that the sum of effectives still equals
+    `subtotal + frete - desconto` to the cent.
+
     `items` is a list of dicts with at least a `preco_total` key (raw).
     """
     if not items:
@@ -251,4 +255,13 @@ def distribute_frete_desconto(
             f"Desconto (R$ {desconto:.2f}) maior que o total da compra "
             f"(R$ {subtotal + (frete or 0):.2f}). Confere os valores."
         )
+
+    # Snap to cents and absorb the rounding remainder on the last item so
+    # the sum still equals subtotal + frete - desconto exactly.
+    effectives = [round(e, 2) for e in effectives]
+    expected_total = round(subtotal + ajuste_total, 2)
+    actual_total = round(sum(effectives), 2)
+    diff = round(expected_total - actual_total, 2)
+    if abs(diff) >= 0.01 and effectives:
+        effectives[-1] = round(effectives[-1] + diff, 2)
     return effectives

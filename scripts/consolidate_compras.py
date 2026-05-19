@@ -51,9 +51,14 @@ from bot.lib import sheets as _sheets  # noqa: E402
 
 
 COMPRAS_RANGE = "Compras!A:Z"
-PRODUTOS_RANGE = "Produtos!A:F"
+# Produtos now has Preco_manual (G) + Preco_manual_data (H). Reading up to
+# H so the row we clear at the end covers the full record — leaving G/H
+# behind would resurrect a stale override.
+PRODUTOS_RANGE = "Produtos!A:H"
 ALIASES_RANGE = "Aliases!A:F"
 EMBT_RANGE = "Embalagens_Por_Tamanho!A:D"
+# Receita_Ingredientes (new schema) — produto_id is in col B.
+RI_RANGE = "Receita_Ingredientes!A:F"
 
 
 def _find_row(rows, col_idx, value):
@@ -119,6 +124,13 @@ def main():
     produtos = _read_unformatted(svc, ssid, PRODUTOS_RANGE)
     aliases = _read_unformatted(svc, ssid, ALIASES_RANGE)
     embt = _read_unformatted(svc, ssid, EMBT_RANGE)
+    # Receita_Ingredientes is best-effort: pre-migration spreadsheets don't
+    # have the tab. We treat it as empty when missing — anything that needs
+    # to migrate references there falls back to the legacy Receita tab.
+    try:
+        ri = _read_unformatted(svc, ssid, RI_RANGE)
+    except Exception:
+        ri = []
 
     # Compras header (row 1) — figure out column indices for the fields we touch.
     # Standard schema: A=id, B=data, C=produto_id, D=fornecedor_id, E=marca,
@@ -218,6 +230,21 @@ def main():
                 print(f"      💡 Rode de novo com --also-remove-from-tamanhos pra tirar essas embalagens dos tamanhos.")
                 abort = True
 
+        # Refs in Receita_Ingredientes (col B = produto_id). Deleting a
+        # produto that's still in some receita would break cost calc, so we
+        # always abort when these exist — there's no auto-clean flag.
+        ri_refs = [
+            (i + 2, e) for i, e in enumerate(ri[1:] if ri else [])
+            if e and len(e) > 1 and e[1] == pid
+        ]
+        if ri_refs:
+            print(f"    ❌ Referenciado em Receita_Ingredientes ({len(ri_refs)} linhas):")
+            for rn2, r2 in ri_refs:
+                receita = r2[0] if len(r2) > 0 else "?"
+                print(f"      row {rn2}: receita {receita}")
+            print(f"      💡 Tira esse produto das receitas em Receitas antes de deletar.")
+            abort = True
+
         # Aliases that resolved to this produto (will be deleted along with the produto)
         alias_refs = [
             (i + 2, a) for i, a in enumerate(aliases[1:])
@@ -252,11 +279,14 @@ def main():
     ).execute()
     print(f"  ✓ Compras!I{keep_row_n}:J{keep_row_n} updated to R$ {args.new_total:.2f} / R$ {new_preco_unit:.4f}")
 
-    # 2. Clear merged compras
+    # 2. Clear merged compras. Range extended to column M because the
+    # frete/desconto migration added two new columns (L/M) — clearing only
+    # up to K would leave stale frete/desconto values behind on the merged
+    # row, which then get included in monthly totals.
     for rn, r in merge_targets:
         svc.spreadsheets().values().clear(
             spreadsheetId=ssid,
-            range=f"Compras!A{rn}:K{rn}",
+            range=f"Compras!A{rn}:M{rn}",
         ).execute()
         print(f"  ✓ Compras row {rn} ({r[COL_ID]}) cleared")
 
@@ -279,11 +309,14 @@ def main():
         ).execute()
         print(f"  ✓ Embalagens_Por_Tamanho row {rn} cleared")
 
-    # 5. Clear produtos rows
+    # 5. Clear produtos rows. Range extended to column H because the WAC
+    # migration added Preco_manual (G) + Preco_manual_data (H); without H
+    # the override would survive even after the produto's main row was
+    # cleared, and could resurface if the ID is later reused.
     for pid, rn in produto_action_rows.items():
         svc.spreadsheets().values().clear(
             spreadsheetId=ssid,
-            range=f"Produtos!A{rn}:F{rn}",
+            range=f"Produtos!A{rn}:H{rn}",
         ).execute()
         print(f"  ✓ Produtos row {rn} ({pid}) cleared")
 

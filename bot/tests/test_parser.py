@@ -81,7 +81,10 @@ def main():
         if produtos:
             enriched = matcher.enrich_receipt(receipt, produtos, fornecedores)
             print("\n--- AFTER MATCHING (Telegram preview) ---")
-            print(orchestrator.format_receipt_summary(enriched))
+            # _format_overview is the renamed equivalent of the old
+            # format_receipt_summary (kept underscored because it's internal
+            # to the orchestrator module).
+            print(orchestrator._format_overview(enriched))
         print()
 
 

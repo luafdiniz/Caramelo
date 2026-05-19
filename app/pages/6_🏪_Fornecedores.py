@@ -116,8 +116,37 @@ with tab_list:
             with head_col3:
                 compact_kpi("Compras", str(int(f["n_compras"])))
 
-            with st.expander("✏️ Editar / 🗑️ Deletar"):
+            with st.expander("🔎 Mais detalhes"):
+                # --- Últimas compras (read-only) ---
+                # Brings the page in line with the Insumos card pattern: the
+                # expander leads with read-only history (`st.table`) and the
+                # edit form lives below — keeps the click cost the same as
+                # before but adds visibility we used to lack.
+                sub_compras = compras[compras["fornecedor_id"] == f["id"]].dropna(subset=["data"]).copy()
+                if not sub_compras.empty:
+                    sub_compras = sub_compras.sort_values("data", ascending=False).head(8)
+                    sub_compras = sub_compras.merge(
+                        data.get_produtos()[["id", "nome"]].rename(
+                            columns={"id": "produto_id", "nome": "produto_nome"}
+                        ),
+                        on="produto_id", how="left",
+                    )
+                    sub_compras["Data"] = sub_compras["data"].dt.strftime("%d/%m/%Y")
+                    sub_compras["Produto"] = sub_compras.apply(
+                        lambda r: f"{r['produto_id']} — {r['produto_nome'] or '?'}", axis=1
+                    )
+                    sub_compras["Total"] = sub_compras["preco_total"].apply(brl)
+                    hist_disp = sub_compras[["id", "Data", "Produto", "marca", "Total"]].copy()
+                    hist_disp.columns = ["ID", "Data", "Produto", "Marca", "Total"]
+                    st.markdown("**Últimas compras**")
+                    st.table(hist_disp.set_index("ID"))
+                else:
+                    st.caption("_Nenhuma compra registrada com esse fornecedor ainda._")
+
+                st.divider()
+
                 # --- Edit ---
+                st.markdown("**✏️ Editar este fornecedor**")
                 with st.form(f"edit_forn_{f['id']}"):
                     new_nome = st.text_input("Nome", value=f["nome"] or "")
                     c1, c2 = st.columns(2)

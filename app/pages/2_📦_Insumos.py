@@ -235,6 +235,25 @@ with tab_tabela:
                 if not new_nome.strip():
                     st.error("Dá um nome pro insumo.")
                 else:
+                    # C8: Soft duplicate-name check. We don't enforce uniqueness
+                    # (the catalog legitimately has variants of the same thing —
+                    # "OVO BRANCO" vs "OVO VERMELHO" once started as the same
+                    # product, but they're now separate produtos to keep the
+                    # WAC distinct). So this is a warning, not a block.
+                    nome_norm = new_nome.strip().casefold()
+                    if not produtos.empty:
+                        clashes = produtos[
+                            produtos["nome"].fillna("").str.casefold() == nome_norm
+                        ]
+                        if not clashes.empty:
+                            existing_list = ", ".join(
+                                f"`{r['id']}`" for _, r in clashes.iterrows()
+                            )
+                            st.warning(
+                                f"⚠️ Já existe insumo com esse nome: {existing_list}. "
+                                "Vou criar mesmo assim — confirma se é um produto "
+                                "diferente (marca, tamanho, fornecedor)."
+                            )
                     try:
                         new_id = data._sheets.create_produto(
                             data._spreadsheet_id(),
@@ -586,9 +605,19 @@ with tab_tabela:
                         service = data.get_service()
                         spreadsheet_id = data._spreadsheet_id()
 
+                        # Snapshot original names so we can detect which
+                        # name_changes actually changed the Nome (vs just
+                        # editing unidade / marca / notas). We only want to
+                        # propagate the cached nome on Receita_Ingredientes
+                        # when the produto's Nome itself moved.
+                        orig_name_by_id = dict(
+                            zip(base_filtered["id"], base_filtered["nome"].fillna(""))
+                        )
+
                         # 1) Field edits — update Produtos columns B (Nome),
                         #    C (Unidade), D (Notas), F (Marca_padrao). Column E
                         #    (Relacionados) stays.
+                        renamed_produto_ids: list[tuple[str, str]] = []  # (produto_id, new_nome)
                         for nc in name_changes:
                             row_num = data.find_row_by_id("Produtos", nc["produto_id"])
                             service.spreadsheets().values().update(
@@ -603,6 +632,36 @@ with tab_tabela:
                                 valueInputOption="USER_ENTERED",
                                 body={"values": [[nc["marca"]]]},
                             ).execute()
+                            # Track actual name changes (not just unit/marca/notas
+                            # edits that share the same path).
+                            if (nc["nome"] or "").strip() != (orig_name_by_id.get(nc["produto_id"]) or "").strip():
+                                renamed_produto_ids.append((nc["produto_id"], nc["nome"]))
+
+                        # 1b) Propagate name changes to Receita_Ingredientes
+                        # (col C = cached `nome`). Receitas joins by produto_id,
+                        # but the cached name is what `_build_component_df`
+                        # falls back to when produtos_df is unavailable — so
+                        # leaving it stale produces UI drift.
+                        if renamed_produto_ids and data._has_sheet("Receita_Ingredientes"):
+                            ri_rows = service.spreadsheets().values().get(
+                                spreadsheetId=spreadsheet_id,
+                                range="Receita_Ingredientes!A:F",
+                                valueRenderOption="UNFORMATTED_VALUE",
+                            ).execute().get("values", [])
+                            # Build {produto_id: new_nome} for quick lookup, then
+                            # walk the tab and patch C{row} where col B matches.
+                            new_name_by_pid = dict(renamed_produto_ids)
+                            for i, r in enumerate(ri_rows[1:], start=2):  # skip header, 1-indexed
+                                if not r or len(r) < 2:
+                                    continue
+                                pid = r[1]
+                                if pid in new_name_by_pid:
+                                    service.spreadsheets().values().update(
+                                        spreadsheetId=spreadsheet_id,
+                                        range=f"Receita_Ingredientes!C{i}",
+                                        valueInputOption="USER_ENTERED",
+                                        body={"values": [[new_name_by_pid[pid]]]},
+                                    ).execute()
 
                         # 2) Price updates — write directly to Produtos.G/H.
                         #    No Compra is created. The override expires when a
@@ -629,6 +688,11 @@ with tab_tabela:
                             data.delete_row("Produtos", row_num)
 
                         data.invalidate_cache()
+                        # Drop back to view mode after a successful save, the
+                        # same way the other pages do — staying in edit mode
+                        # while the data underneath has changed makes the
+                        # diff feel stale on the next interaction.
+                        st.session_state[ins_edit_key] = False
                         st.success(
                             f"✅ Salvo: {len(name_changes)} edição(ões), "
                             f"{len(price_updates)} atualização(ões) de preço, "

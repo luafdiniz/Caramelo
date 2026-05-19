@@ -116,7 +116,7 @@ def _build_component_df(
     Build the DataFrame shown by `st.data_editor` for one component.
 
     Columns: ID, Nome, Qtde, Unidade, Custo, Remover.
-    `Custo` is recomputed from qtde × latest_unit_price, so it stays
+    `Custo` is recomputed from qtde × current_unit_price, so it stays
     accurate even when the user changes Qtde inline (after rerun).
     """
     if sub.empty:
@@ -127,7 +127,10 @@ def _build_component_df(
     for _, r in sub.iterrows():
         pid = r["produto_id"]
         qtde = float(r["qtde"]) if pd.notna(r.get("qtde")) else 0.0
-        preco = data.latest_unit_price(pid, compras_df)
+        # `current_unit_price` falls through to the cached get_produtos()
+        # when we don't pass `produtos=...`, so it still honors the
+        # manual override on Produtos.G/H. Cheap enough at the row level.
+        preco = data.current_unit_price(pid, compras=compras_df)
         rows.append({
             "ID": pid,
             "Nome": r.get("produto_nome") or r.get("nome") or pid,
@@ -264,7 +267,7 @@ with tab_list:
                 ing = all_ing[all_ing["receita_id"] == receita_id].copy()
                 if not ing.empty:
                     ing["preco_unit_atual"] = ing["produto_id"].apply(
-                        lambda p: data.latest_unit_price(p, compras_df)
+                        lambda p: data.current_unit_price(p, compras=compras_df, produtos=produtos_df)
                     )
                     ing["custo"] = ing["qtde"] * ing["preco_unit_atual"]
                     if not produtos_df.empty:
@@ -360,7 +363,7 @@ with tab_list:
                                                     "Nome": prod_row.get("nome") or pid,
                                                     "Qtde": 1.0,
                                                     "Unidade": default_unit,
-                                                    "Custo": 1.0 * data.latest_unit_price(pid, compras_df),
+                                                    "Custo": 1.0 * data.current_unit_price(pid, compras=compras_df, produtos=produtos_df),
                                                     "Remover": False,
                                                 })
                                             st.session_state[sel_key] = ""
@@ -520,6 +523,18 @@ with tab_list:
                                 new_ing_rows.append(
                                     [receita_id, pid, nome_prod, qtde, unidade, comp]
                                 )
+
+                        # C7: Saving a receita with no ingredients is technically
+                        # valid (you might be staging a recipe to fill in later),
+                        # but it silently zeroes out the custo_alimento of every
+                        # tamanho that uses this receita. Warn loudly but don't
+                        # block — the user might really mean it.
+                        if not new_ing_rows:
+                            st.warning(
+                                "⚠️ Esta receita vai ficar **sem ingredientes**. "
+                                "Tamanhos que usarem essa receita vão ter custo "
+                                "de alimento = R$ 0. Salvando assim mesmo."
+                            )
 
                         # 4. Rewrite Receita_Ingredientes: keep other receitas,
                         # replace this one's block.

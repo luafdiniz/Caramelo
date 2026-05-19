@@ -83,44 +83,49 @@ def apply_currency_format(ws, col, start_row=2, end_row=None):
 # DATA
 # =============================================================================
 
+# Schema (cols A:H): ID, Nome, Unidade, Notas, Relacionados, Marca_padrao,
+# Preco_manual, Preco_manual_data. Seed rows below leave the trailing five
+# columns empty — the spreadsheet picks them up as blank strings, which is
+# exactly what `lib.data.get_produtos()` expects for "no override / no
+# default brand". Adding values for them later happens via the app, not here.
 PRODUTOS = [
     # ALI - Alimentos
-    ("ALI-001", "LEITE CONDENSADO 395G", "UN", ""),
-    ("ALI-002", "AÇÚCAR REFINADO 1KG", "KG", ""),
-    ("ALI-003", "LEITE INTEGRAL 1L", "L", ""),
-    ("ALI-004", "OVO (UNIDADE)", "UN", "Comprado em pente de 30"),
+    ("ALI-001", "LEITE CONDENSADO 395G", "UN", "", "", "", "", ""),
+    ("ALI-002", "AÇÚCAR REFINADO 1KG", "KG", "", "", "", "", ""),
+    ("ALI-003", "LEITE INTEGRAL 1L", "L", "", "", "", "", ""),
+    ("ALI-004", "OVO (UNIDADE)", "UN", "Comprado em pente de 30", "", "", "", ""),
     # FOR - Formas
-    ("FOR-001", "FORMA PUDIM GRANDE 500ML", "UN", "Plastilânia"),
-    ("FOR-002", "FORMA PUDIM FAMÍLIA 1,1L", "UN", ""),
-    ("FOR-003", "FORMA PUDIM MÉDIA 250ML", "UN", "Plastilânia"),
-    ("FOR-004", "FORMA PUDIM PEQUENA 150ML", "UN", "Plastilânia"),
-    ("FOR-005", "FORMA QUADRADA 220ML", "UN", "Plastilânia"),
+    ("FOR-001", "FORMA PUDIM GRANDE 500ML", "UN", "Plastilânia", "", "", "", ""),
+    ("FOR-002", "FORMA PUDIM FAMÍLIA 1,1L", "UN", "", "", "", "", ""),
+    ("FOR-003", "FORMA PUDIM MÉDIA 250ML", "UN", "Plastilânia", "", "", "", ""),
+    ("FOR-004", "FORMA PUDIM PEQUENA 150ML", "UN", "Plastilânia", "", "", "", ""),
+    ("FOR-005", "FORMA QUADRADA 220ML", "UN", "Plastilânia", "", "", "", ""),
     # EMB - Embalagens
-    ("EMB-001", "SACOLA KRAFT GG (35X30X18)", "UN", ""),
-    ("EMB-002", "SACOLA KRAFT G (31X26X13)", "UN", ""),
-    ("EMB-003", "SACO CELOFANE GG (45X59)", "UN", ""),
-    ("EMB-004", "SACO CELOFANE G (30X44)", "UN", ""),
-    ("EMB-005", "FITA PRODUTO ARTESANAL", "M", ""),
-    ("EMB-006", "COLHER ROXA", "UN", ""),
-    ("EMB-007", "SAQUINHO P/ COLHER", "UN", ""),
-    ("EMB-008", "ETIQUETA REDONDA TAMPA VINIL (7,5x7,5)", "FOLHA", ""),
-    ("EMB-009", "ADESIVO CACHORRO CARAMELO", "FOLHA", ""),
-    ("EMB-010", "ADESIVO BANDEIRA CARAMELO", "FOLHA", ""),
-    ("EMB-011", "ADESIVO ME VÊ 2 FATIAS", "FOLHA", ""),
-    ("EMB-012", "SACOLA KRAFT (24X15X25)", "UN", ""),
-    ("EMB-013", "SACO PLÁSTICO POLIPROPILENO (30X44)", "UN", ""),
-    ("EMB-014", "FITA CETIM 15MM ROXO", "M", ""),
-    ("EMB-015", "FITA CETIM 15MM LILÁS", "M", ""),
-    ("EMB-016", "BARBANTE SISAL", "M", ""),
-    ("EMB-017", "BARBANTE VERMELHO E BRANCO", "M", ""),
-    ("EMB-018", "ETIQUETA REDONDA TAMPA PAPEL (7,5x7,5)", "FOLHA", ""),
-    ("EMB-019", "SACOLA KRAFT (31X17X30)", "UN", ""),
-    ("EMB-020", "SACO PLÁSTICO POLIPROPILENO (35X50)", "UN", ""),
+    ("EMB-001", "SACOLA KRAFT GG (35X30X18)", "UN", "", "", "", "", ""),
+    ("EMB-002", "SACOLA KRAFT G (31X26X13)", "UN", "", "", "", "", ""),
+    ("EMB-003", "SACO CELOFANE GG (45X59)", "UN", "", "", "", "", ""),
+    ("EMB-004", "SACO CELOFANE G (30X44)", "UN", "", "", "", "", ""),
+    ("EMB-005", "FITA PRODUTO ARTESANAL", "M", "", "", "", "", ""),
+    ("EMB-006", "COLHER ROXA", "UN", "", "", "", "", ""),
+    ("EMB-007", "SAQUINHO P/ COLHER", "UN", "", "", "", "", ""),
+    ("EMB-008", "ETIQUETA REDONDA TAMPA VINIL (7,5x7,5)", "FOLHA", "", "", "", "", ""),
+    ("EMB-009", "ADESIVO CACHORRO CARAMELO", "FOLHA", "", "", "", "", ""),
+    ("EMB-010", "ADESIVO BANDEIRA CARAMELO", "FOLHA", "", "", "", "", ""),
+    ("EMB-011", "ADESIVO ME VÊ 2 FATIAS", "FOLHA", "", "", "", "", ""),
+    ("EMB-012", "SACOLA KRAFT (24X15X25)", "UN", "", "", "", "", ""),
+    ("EMB-013", "SACO PLÁSTICO POLIPROPILENO (30X44)", "UN", "", "", "", "", ""),
+    ("EMB-014", "FITA CETIM 15MM ROXO", "M", "", "", "", "", ""),
+    ("EMB-015", "FITA CETIM 15MM LILÁS", "M", "", "", "", "", ""),
+    ("EMB-016", "BARBANTE SISAL", "M", "", "", "", "", ""),
+    ("EMB-017", "BARBANTE VERMELHO E BRANCO", "M", "", "", "", "", ""),
+    ("EMB-018", "ETIQUETA REDONDA TAMPA PAPEL (7,5x7,5)", "FOLHA", "", "", "", "", ""),
+    ("EMB-019", "SACOLA KRAFT (31X17X30)", "UN", "", "", "", "", ""),
+    ("EMB-020", "SACO PLÁSTICO POLIPROPILENO (35X50)", "UN", "", "", "", "", ""),
     # EQP - Equipamentos
-    ("EQP-001", "GRADE METAL 46X26X3", "UN", ""),
-    ("EQP-002", "LUVA SILICONE", "UN", ""),
-    ("EQP-003", "PANELINHA MAX TRANSP C/TAMPA", "UN", ""),
-    ("EQP-004", "GRADE DE RESFRIAMENTO", "UN", ""),
+    ("EQP-001", "GRADE METAL 46X26X3", "UN", "", "", "", "", ""),
+    ("EQP-002", "LUVA SILICONE", "UN", "", "", "", "", ""),
+    ("EQP-003", "PANELINHA MAX TRANSP C/TAMPA", "UN", "", "", "", "", ""),
+    ("EQP-004", "GRADE DE RESFRIAMENTO", "UN", "", "", "", "", ""),
 ]
 
 FORNECEDORES = [
@@ -257,7 +262,15 @@ FLUXO_CAIXA = [
 
 def build_produtos(wb):
     ws = wb.create_sheet("Produtos")
-    headers = ["ID", "Nome", "Unidade", "Notas"]
+    # Full schema A:H. Relacionados / Marca_padrao / Preco_manual /
+    # Preco_manual_data are exposed even in a fresh spreadsheet so the app
+    # doesn't need to "discover" them later — `lib.data.get_produtos` reads
+    # A:H and treats missing cells as empty, but having the headers makes
+    # the spreadsheet self-documenting for anyone looking at it directly.
+    headers = [
+        "ID", "Nome", "Unidade", "Notas", "Relacionados",
+        "Marca_padrao", "Preco_manual", "Preco_manual_data",
+    ]
     ws.append(headers)
     style_header(ws, len(headers))
 
@@ -282,8 +295,15 @@ def build_produtos(wb):
                 ws.cell(row=row, column=col).fill = fill
                 ws.cell(row=row, column=col).border = THIN_BORDER
 
+    # Format the Preco_manual column as BRL even though seeds leave it blank
+    # — saves a step the first time someone edits the cell.
+    apply_currency_format(ws, 7)
+    # Preco_manual_data uses the same date format as Compras.Data.
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row=row, column=8).number_format = 'DD/MM/YYYY'
+
     auto_width(ws, len(headers))
-    ws.auto_filter.ref = f"A1:D{ws.max_row}"
+    ws.auto_filter.ref = f"A1:H{ws.max_row}"
     ws.freeze_panes = "A2"
 
 
@@ -304,10 +324,15 @@ def build_fornecedores(wb):
 
 def build_compras(wb):
     ws = wb.create_sheet("Compras")
+    # Full schema A:M. The trailing frete/desconto columns are read by
+    # `lib.data.get_compras` and rateado proportionally into per-item cost
+    # by the app — see `scripts/migrate_compras_frete.py`. Seeds leave them
+    # blank because the historical compras imported here didn't track
+    # frete/desconto separately.
     headers = [
         "ID", "Data", "Produto_ID", "Fornecedor_ID", "Marca",
         "Qtde_Embalagens", "Unidades_por_Embalagem", "Total_Unidades",
-        "Preco_Total", "Preco_Unitario", "Notas"
+        "Preco_Total", "Preco_Unitario", "Notas", "Frete", "Desconto",
     ]
     ws.append(headers)
     style_header(ws, len(headers))
@@ -331,10 +356,15 @@ def build_compras(wb):
         ws.cell(row=row_num, column=10, value=f"=IF(H{row_num}>0,I{row_num}/H{row_num},0)")
         ws.cell(row=row_num, column=10).number_format = BRL_FORMAT
         ws.cell(row=row_num, column=11, value=c[8])  # Notas
+        # L (Frete) + M (Desconto): blank by default. Format them as BRL so
+        # editing later in the spreadsheet produces a properly-formatted
+        # currency cell. The app reads them with UNFORMATTED_VALUE either way.
+        ws.cell(row=row_num, column=12).number_format = BRL_FORMAT
+        ws.cell(row=row_num, column=13).number_format = BRL_FORMAT
 
     style_data_rows(ws, ws.max_row, len(headers))
     auto_width(ws, len(headers))
-    ws.auto_filter.ref = f"A1:K{ws.max_row}"
+    ws.auto_filter.ref = f"A1:M{ws.max_row}"
     ws.freeze_panes = "A2"
 
 

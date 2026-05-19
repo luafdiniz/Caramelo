@@ -85,11 +85,11 @@ chart_df = cat_summary.set_index("categoria")[["total"]]
 chart_df.columns = ["Total gasto (R$)"]
 st.bar_chart(chart_df, height=240)
 
-# Table
+# Table — read-only summary, st.table for brand styling consistency.
 cat_display = cat_summary.copy()
 cat_display["total"] = cat_display["total"].apply(brl)
 cat_display.columns = ["Categoria", "Total gasto", "Nº compras"]
-st.dataframe(cat_display, hide_index=True, use_container_width=True)
+st.table(cat_display.set_index("Categoria"))
 
 
 # Top fornecedores do mês
@@ -101,7 +101,7 @@ forn_summary = month_data.groupby("fornecedor_nome").agg(
 forn_display = forn_summary.copy()
 forn_display["total"] = forn_display["total"].apply(brl)
 forn_display.columns = ["Fornecedor", "Total gasto", "Nº compras"]
-st.dataframe(forn_display, hide_index=True, use_container_width=True)
+st.table(forn_display.set_index("Fornecedor"))
 
 
 st.divider()
@@ -161,7 +161,7 @@ filtered = filtered.sort_values(sort_map[sort_by], ascending=asc, na_position="l
 
 st.caption(f"Mostrando {len(filtered)} compra(s). Total: **{brl(filtered['preco_total'].sum())}**")
 
-# Detailed table
+# Detailed table — read-only history, st.table for brand styling.
 disp = filtered.copy()
 disp["data_str"] = disp["data"].dt.strftime("%d/%m/%Y").fillna("—")
 disp["preco_total_str"] = disp["preco_total"].apply(brl)
@@ -183,7 +183,7 @@ table.columns = [
     "Qtde emb.", "Unid./emb.",
     "Preço total", "Preço unit.", "Fornecedor",
 ]
-st.dataframe(table, hide_index=True, use_container_width=True)
+st.table(table.set_index("ID"))
 
 
 # Expandable detail for each compra
@@ -201,6 +201,25 @@ with st.expander("Clique pra ver detalhes individuais"):
                 )
                 if r.get("notas"):
                     st.caption(f"📝 {r['notas']}")
+
+                # FLAG D5: surface frete/desconto when present. They're
+                # rateado proportionally across items at calc time (see
+                # `scripts/migrate_compras_frete.py`), so it's worth being
+                # explicit about that here so the user understands why two
+                # Compras of the same produto at the same marca can come
+                # out at different preco_unitario.
+                frete = float(r.get("frete") or 0) if pd.notna(r.get("frete")) else 0.0
+                desconto = float(r.get("desconto") or 0) if pd.notna(r.get("desconto")) else 0.0
+                if frete > 0 or desconto > 0:
+                    parts = []
+                    if frete > 0:
+                        parts.append(f"**Frete**: {brl(frete)}")
+                    if desconto > 0:
+                        parts.append(f"**Desconto**: {brl(desconto)}")
+                    st.caption(
+                        " · ".join(parts)
+                        + " · _rateado proporcionalmente entre os itens_"
+                    )
             with top2:
                 compact_kpi("Total", brl(r["preco_total"]))
                 st.caption(f"{r['total_unidades']:.0f} unid · {brl(r['preco_unitario'])}/un")

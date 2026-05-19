@@ -107,9 +107,18 @@ with tab_new:
                 )
 
             teste_perda = produzidos - vendidos - cortesia
+            # We track invalid rows in session state so the Salvar button
+            # below can disable itself — the previous behavior only printed
+            # an error and still let the user click save, ending up with a
+            # row where Vendidos+Cortesia > Produzidos in the spreadsheet.
+            invalid_rows_key = "_fornada_invalid_rows"
+            invalid_rows = st.session_state.setdefault(invalid_rows_key, set())
             if teste_perda < 0:
                 st.error(f"Vendidos + cortesia ({vendidos + cortesia}) é maior que produzidos ({produzidos})")
-            elif produzidos > 0:
+                invalid_rows.add(t["id"])
+            else:
+                invalid_rows.discard(t["id"])
+            if teste_perda >= 0 and produzidos > 0:
                 custo_total = t["custo_total"] * produzidos
                 receita = vendidos * preco_efetivo
                 lucro = receita - custo_total
@@ -161,8 +170,22 @@ with tab_new:
         with s5:
             compact_kpi("Lucro", brl(lucro_geral))
 
-        # Save
-        if st.button("💾 Registrar fornada", type="primary", use_container_width=True):
+        # Save — disable while there's any row where Vendidos+Cortesia >
+        # Produzidos. We just printed an `st.error` per offending row above,
+        # so blocking submission here is the hard half of that guard.
+        has_invalid_rows = bool(st.session_state.get("_fornada_invalid_rows"))
+        if has_invalid_rows:
+            st.error(
+                "⚠️ Não dá pra salvar — pelo menos um tamanho tem "
+                "**Vendidos + Cortesia maior que Produzidos**. Ajuste os "
+                "valores antes de continuar."
+            )
+        if st.button(
+            "💾 Registrar fornada",
+            type="primary",
+            use_container_width=True,
+            disabled=has_invalid_rows,
+        ):
             try:
                 service = data.get_service()
 
@@ -253,7 +276,8 @@ with tab_list:
             agg["custo"] = agg["custo"].apply(brl)
             agg["lucro"] = agg["lucro"].apply(brl)
             agg.columns = ["Mês", "Fornadas", "Produzidos", "Vendidos", "Receita", "Custo", "Lucro"]
-            st.dataframe(agg, hide_index=True, use_container_width=True)
+            # Read-only — brand-styled st.table for consistency.
+            st.table(agg.set_index("Mês"))
 
         st.divider()
         st.markdown("### Histórico detalhado")
