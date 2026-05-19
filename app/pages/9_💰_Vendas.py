@@ -153,7 +153,8 @@ with tab_hist:
     view.columns = ["ID", "Data", "Cliente", "Tamanho", "Qtde",
                     "Preço unit.", "Total", "Lucro", "Canal", "Status"]
 
-    st.dataframe(view, hide_index=True, use_container_width=True)
+    # Read-only history — st.table for brand styling consistency with other pages.
+    st.table(view.set_index("ID"))
 
     # Aggregates
     total_fat = float(vendas[vendas["status"] != "cancelada"]["preco_total"].sum())

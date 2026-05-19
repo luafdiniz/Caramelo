@@ -111,6 +111,12 @@ if view.empty:
 
 st.caption(f"{len(view)} cliente(s)")
 
+# Toggle: view (st.table) vs edit (data_editor).
+cli_edit_key = "clientes_edit_mode"
+if cli_edit_key not in st.session_state:
+    st.session_state[cli_edit_key] = False
+cli_edit_active = st.session_state[cli_edit_key]
+
 editor_df = pd.DataFrame({
     "ID": view["id"].values,
     "Nome": view["nome"].values,
@@ -123,6 +129,22 @@ editor_df = pd.DataFrame({
     "Ativo": view["ativo"].astype(bool).values,
     "Excluir": [False] * len(view),
 })
+
+if not cli_edit_active:
+    # --- VIEW MODE ---
+    disp = editor_df.drop(columns=["Excluir"]).copy()
+    disp["Ativo"] = disp["Ativo"].map({True: "✓", False: "—"})
+    st.table(disp.set_index("ID"))
+    if st.button("✏️ Editar tabela", key="clientes_edit_btn"):
+        st.session_state[cli_edit_key] = True
+        st.rerun()
+    st.stop()
+
+# --- EDIT MODE ---
+st.info("✏️ Modo de edição **ativo**.")
+if st.button("✖ Cancelar edição", key="clientes_cancel_btn"):
+    st.session_state[cli_edit_key] = False
+    st.rerun()
 
 edited = st.data_editor(
     editor_df,
@@ -203,6 +225,7 @@ if st.button("💾 Salvar alterações", type="primary", disabled=not has_change
             data.delete_row("Clientes", row_num)
 
         data.invalidate_cache()
+        st.session_state[cli_edit_key] = False
         st.success(f"✅ Salvo: {len(changes)} edição(ões), {len(deletions)} exclusão(ões).")
         st.rerun()
     except Exception as e:

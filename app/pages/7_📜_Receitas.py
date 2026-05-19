@@ -278,10 +278,14 @@ with tab_list:
                     else:
                         ing["produto_nome"] = ing["nome"]
 
-                # ---- Two data_editors side by side ----
+                # Toggle: view (st.table brand-styled) vs edit (data_editor).
+                rec_edit_key = f"rec_edit_mode_{receita_id}"
+                if rec_edit_key not in st.session_state:
+                    st.session_state[rec_edit_key] = False
+                rec_edit_active = st.session_state[rec_edit_key]
+
+                # ---- Two columns side by side (Calda | Massa) ----
                 col_calda, col_massa = st.columns([1, 1])
-                # Capture each editor's returned (edited) DataFrame so the
-                # save handler can read the latest values directly.
                 edited_by_comp: dict[str, pd.DataFrame] = {}
 
                 for comp, col in (("calda", col_calda), ("massa", col_massa)):
@@ -302,90 +306,92 @@ with tab_list:
                                 ignore_index=True,
                             )
 
-                        # --- Add ingredient row ---
-                        already_in = set(comp_df["ID"].tolist()) if not comp_df.empty else set()
-                        if not ali_options.empty:
-                            pool = ali_options[~ali_options["id"].isin(already_in)].copy()
-                        else:
-                            pool = pd.DataFrame()
-                        if not pool.empty:
-                            pool["label"] = pool["id"] + " — " + pool["nome"]
-                            add_col_sel, add_col_btn = st.columns([3, 1])
-                            with add_col_sel:
-                                sel_key = f"add_sel_{receita_id}_{comp}"
-                                st.selectbox(
-                                    f"Adicionar ingrediente à {comp}",
-                                    options=[""] + pool["id"].tolist(),
-                                    format_func=lambda x: (
-                                        pool[pool["id"] == x]["label"].iloc[0]
-                                        if x else "— escolha um ingrediente —"
-                                    ),
-                                    key=sel_key,
-                                    label_visibility="collapsed",
+                        if not rec_edit_active:
+                            # --- VIEW MODE (st.table brand-styled) ---
+                            if comp_df.empty:
+                                st.caption("_Sem ingredientes nesse componente._")
+                            else:
+                                disp = comp_df[["ID", "Nome", "Qtde", "Unidade", "Custo"]].copy()
+                                disp["Qtde"] = disp["Qtde"].apply(
+                                    lambda v: f"{v:.3g}".replace(".", ",")
                                 )
-                            with add_col_btn:
-                                if st.button(
-                                    "➕ Adicionar",
-                                    key=f"add_btn_{receita_id}_{comp}",
-                                    use_container_width=True,
-                                ):
-                                    pid = st.session_state.get(sel_key, "")
-                                    if pid:
-                                        prod_row = produtos_df[produtos_df["id"] == pid].iloc[0]
-                                        default_unit = (
-                                            (prod_row.get("unidade") or "").strip().upper() or "G"
-                                        )
-                                        # Stage the new ingredient in session_state.
-                                        # It's picked up on the next rerun by
-                                        # being concatenated into comp_df below.
-                                        pending_key = f"pending_add_{receita_id}_{comp}"
-                                        pending = st.session_state.setdefault(pending_key, [])
-                                        if not any(p["ID"] == pid for p in pending):
-                                            pending.append({
-                                                "ID": pid,
-                                                "Nome": prod_row.get("nome") or pid,
-                                                "Qtde": 1.0,
-                                                "Unidade": default_unit,
-                                                "Custo": 1.0 * data.latest_unit_price(pid, compras_df),
-                                                "Remover": False,
-                                            })
-                                        # Reset the selectbox.
-                                        st.session_state[sel_key] = ""
-                                        st.rerun()
-
-                        # --- Render the data_editor ---
-                        editor_key = f"editor_{receita_id}_{comp}"
-
-                        if comp_df.empty:
-                            st.caption("_Sem ingredientes nesse componente._")
-                            compact_kpi(f"Custo {comp}", brl(0))
-                            # Empty placeholder so the save handler treats this
-                            # component as "no ingredients" cleanly.
+                                disp["Custo"] = disp["Custo"].apply(brl)
+                                st.table(disp.set_index("ID"))
+                            compact_kpi(f"Custo {comp}", brl(float(comp_df["Custo"].sum()) if not comp_df.empty else 0))
                             edited_by_comp[comp] = comp_df
                         else:
-                            display_df = _format_custo_column(comp_df)
-                            unit_opts = _unit_options_for(comp_df)
-                            edited_display = st.data_editor(
-                                display_df,
-                                column_config=_column_config(unit_opts),
-                                hide_index=True,
-                                use_container_width=True,
-                                num_rows="fixed",
-                                key=editor_key,
-                            )
-                            # `edited_display` carries the user's inline edits.
-                            # Custo is a display-only string column, so we
-                            # restore the numeric column from comp_df (by ID)
-                            # before the save handler runs.
-                            edited_numeric = edited_display.copy()
-                            edited_numeric["Custo"] = comp_df.set_index("ID")["Custo"].reindex(
-                                edited_numeric["ID"]
-                            ).values
-                            edited_by_comp[comp] = edited_numeric
-                            compact_kpi(
-                                f"Custo {comp}",
-                                brl(float(comp_df["Custo"].sum())),
-                            )
+                            # --- EDIT MODE (data_editor + Adicionar ingrediente) ---
+                            already_in = set(comp_df["ID"].tolist()) if not comp_df.empty else set()
+                            if not ali_options.empty:
+                                pool = ali_options[~ali_options["id"].isin(already_in)].copy()
+                            else:
+                                pool = pd.DataFrame()
+                            if not pool.empty:
+                                pool["label"] = pool["id"] + " — " + pool["nome"]
+                                add_col_sel, add_col_btn = st.columns([3, 1])
+                                with add_col_sel:
+                                    sel_key = f"add_sel_{receita_id}_{comp}"
+                                    st.selectbox(
+                                        f"Adicionar ingrediente à {comp}",
+                                        options=[""] + pool["id"].tolist(),
+                                        format_func=lambda x: (
+                                            pool[pool["id"] == x]["label"].iloc[0]
+                                            if x else "— escolha um ingrediente —"
+                                        ),
+                                        key=sel_key,
+                                        label_visibility="collapsed",
+                                    )
+                                with add_col_btn:
+                                    if st.button(
+                                        "➕ Adicionar",
+                                        key=f"add_btn_{receita_id}_{comp}",
+                                        use_container_width=True,
+                                    ):
+                                        pid = st.session_state.get(sel_key, "")
+                                        if pid:
+                                            prod_row = produtos_df[produtos_df["id"] == pid].iloc[0]
+                                            default_unit = (
+                                                (prod_row.get("unidade") or "").strip().upper() or "G"
+                                            )
+                                            pending = st.session_state.setdefault(pending_key, [])
+                                            if not any(p["ID"] == pid for p in pending):
+                                                pending.append({
+                                                    "ID": pid,
+                                                    "Nome": prod_row.get("nome") or pid,
+                                                    "Qtde": 1.0,
+                                                    "Unidade": default_unit,
+                                                    "Custo": 1.0 * data.latest_unit_price(pid, compras_df),
+                                                    "Remover": False,
+                                                })
+                                            st.session_state[sel_key] = ""
+                                            st.rerun()
+
+                            editor_key = f"editor_{receita_id}_{comp}"
+
+                            if comp_df.empty:
+                                st.caption("_Sem ingredientes nesse componente._")
+                                compact_kpi(f"Custo {comp}", brl(0))
+                                edited_by_comp[comp] = comp_df
+                            else:
+                                display_df = _format_custo_column(comp_df)
+                                unit_opts = _unit_options_for(comp_df)
+                                edited_display = st.data_editor(
+                                    display_df,
+                                    column_config=_column_config(unit_opts),
+                                    hide_index=True,
+                                    use_container_width=True,
+                                    num_rows="fixed",
+                                    key=editor_key,
+                                )
+                                edited_numeric = edited_display.copy()
+                                edited_numeric["Custo"] = comp_df.set_index("ID")["Custo"].reindex(
+                                    edited_numeric["ID"]
+                                ).values
+                                edited_by_comp[comp] = edited_numeric
+                                compact_kpi(
+                                    f"Custo {comp}",
+                                    brl(float(comp_df["Custo"].sum())),
+                                )
 
                 # Ingredients with no componente (shouldn't normally happen,
                 # but the migration shim leaves them empty pre-apply).
@@ -420,6 +426,30 @@ with tab_list:
                             key=f"confirm_padrao_{receita_id}",
                         )
                     save_disabled = not confirm_padrao
+
+                # --- Edit toggle ------------------------------------------------
+                if not rec_edit_active:
+                    if st.button(
+                        "✏️ Editar receita",
+                        key=f"rec_edit_btn_{receita_id}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[rec_edit_key] = True
+                        st.rerun()
+                    # In view mode there's nothing to save, so we skip the rest.
+                    continue
+
+                cancel_col, _ = st.columns([1, 3])
+                with cancel_col:
+                    if st.button(
+                        "✖ Cancelar edição",
+                        key=f"rec_cancel_btn_{receita_id}",
+                    ):
+                        st.session_state[rec_edit_key] = False
+                        # Drop any unsaved staged ingredient additions for this receita.
+                        for c in COMPONENTES:
+                            st.session_state.pop(f"pending_add_{receita_id}_{c}", None)
+                        st.rerun()
 
                 # --- Save button -----------------------------------------------
                 if st.button(
@@ -506,6 +536,10 @@ with tab_list:
                             st.session_state.pop(f"pending_add_{receita_id}_{comp}", None)
 
                         data.invalidate_cache()
+                        # Reset edit mode + clear staged adds for this receita.
+                        st.session_state[rec_edit_key] = False
+                        for c in COMPONENTES:
+                            st.session_state.pop(f"pending_add_{receita_id}_{c}", None)
                         st.success(f"✅ {receita_id} atualizado!")
                         st.rerun()
                     except Exception as e:

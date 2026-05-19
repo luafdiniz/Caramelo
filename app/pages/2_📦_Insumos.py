@@ -307,299 +307,337 @@ with tab_tabela:
 
             _ORIGEM_LABEL = {"manual": "✋ Manual", "wac": "📊 Média", "none": "—"}
 
-            editor_df = pd.DataFrame({
-                "ID": base_filtered["id"].values,
-                "🍯": [CAT_EMOJI.get(c, "•") for c in base_filtered["categoria"].values],
-                "Insumo": [(n or "") for n in base_filtered["nome"].values],
-                "Categoria": base_filtered["categoria"].values,
-                "Unidade": [(u or "UN") for u in base_filtered["unidade"].values],
-                "Marca padrão": [(m or "") for m in base_filtered["marca_padrao"].values],
-                "Preço atual": [
-                    (float(p) if p is not None and pd.notna(p) else None)
-                    for p in base_filtered["preco_atual"].values
-                ],
-                "Origem": [_ORIGEM_LABEL.get(o, "—") for o in base_filtered["origem"].values],
-                "Compras": [int(n) for n in base_filtered["n_compras"].values],
-                "Última": [
-                    (pd.Timestamp(d).date() if d is not None and pd.notna(d) else None)
-                    for d in base_filtered["ultima_data"].values
-                ],
-                "Notas": [(n or "") for n in base_filtered["notas"].values],
-                "Excluir": [False] * len(base_filtered),
-            })
+            # Toggle: default view = brand-styled st.table. Edit mode = data_editor.
+            ins_edit_key = "ins_tabela_edit_mode"
+            if ins_edit_key not in st.session_state:
+                st.session_state[ins_edit_key] = False
+            ins_edit_active = st.session_state[ins_edit_key]
 
-            # Build the unit selectbox options dynamically so that legacy/odd
-            # units don't get rejected by the editor.
-            unit_options = list(STANDARD_UNITS)
-            for u in editor_df["Unidade"].unique():
-                if u and u not in unit_options:
-                    unit_options.append(u)
+            if not ins_edit_active:
+                # --- VIEW MODE (st.table, brand-styled like Ingredientes da receita) ---
+                disp = pd.DataFrame({
+                    "ID": base_filtered["id"].values,
+                    "🍯": [CAT_EMOJI.get(c, "•") for c in base_filtered["categoria"].values],
+                    "Insumo": [(n or "") for n in base_filtered["nome"].values],
+                    "Categoria": base_filtered["categoria"].values,
+                    "Unidade": [(u or "UN") for u in base_filtered["unidade"].values],
+                    "Marca padrão": [(m or "") for m in base_filtered["marca_padrao"].values],
+                    "Preço atual": [
+                        brl(float(p)) if p is not None and pd.notna(p) else "—"
+                        for p in base_filtered["preco_atual"].values
+                    ],
+                    "Origem": [_ORIGEM_LABEL.get(o, "—") for o in base_filtered["origem"].values],
+                    "Compras": [str(int(n)) for n in base_filtered["n_compras"].values],
+                    "Última": [
+                        pd.Timestamp(d).strftime("%d/%m/%Y") if d is not None and pd.notna(d) else "—"
+                        for d in base_filtered["ultima_data"].values
+                    ],
+                    "Notas": [(n or "") for n in base_filtered["notas"].values],
+                })
+                st.table(disp.set_index("ID"))
+                if st.button("✏️ Editar tabela", key="ins_tabela_edit_btn"):
+                    st.session_state[ins_edit_key] = True
+                    st.rerun()
+            else:
+                # --- EDIT MODE ---
+                st.info("✏️ Modo de edição **ativo**. Clique em Salvar pra confirmar, ou Cancelar pra desistir.")
+                if st.button("✖ Cancelar edição", key="ins_tabela_cancel_btn"):
+                    st.session_state[ins_edit_key] = False
+                    st.rerun()
 
-            edited = st.data_editor(
-                editor_df,
-                hide_index=True,
-                use_container_width=True,
-                num_rows="fixed",
-                key="insumos_editor_all",
-                column_config={
-                    "ID": st.column_config.TextColumn(
-                        "ID", disabled=True, width="small",
-                        help="Identificador único do insumo (não editável).",
-                    ),
-                    "🍯": st.column_config.TextColumn(
-                        "🍯", disabled=True, width="small",
-                        help="Emoji da categoria — só visual.",
-                    ),
-                    "Insumo": st.column_config.TextColumn(
-                        "Insumo", width="medium",
-                        help="Nome do insumo. Editável.",
-                    ),
-                    "Categoria": st.column_config.TextColumn(
-                        "Categoria", disabled=True, width="small",
-                        help=(
-                            "Mudar a categoria de um insumo muda o prefixo do ID e "
-                            "exige migrar referências. Use o script "
-                            "scripts/migrate_categoria.py."
+                    editor_df = pd.DataFrame({
+                    "ID": base_filtered["id"].values,
+                    "🍯": [CAT_EMOJI.get(c, "•") for c in base_filtered["categoria"].values],
+                    "Insumo": [(n or "") for n in base_filtered["nome"].values],
+                    "Categoria": base_filtered["categoria"].values,
+                    "Unidade": [(u or "UN") for u in base_filtered["unidade"].values],
+                    "Marca padrão": [(m or "") for m in base_filtered["marca_padrao"].values],
+                    "Preço atual": [
+                        (float(p) if p is not None and pd.notna(p) else None)
+                        for p in base_filtered["preco_atual"].values
+                    ],
+                    "Origem": [_ORIGEM_LABEL.get(o, "—") for o in base_filtered["origem"].values],
+                    "Compras": [int(n) for n in base_filtered["n_compras"].values],
+                    "Última": [
+                        (pd.Timestamp(d).date() if d is not None and pd.notna(d) else None)
+                        for d in base_filtered["ultima_data"].values
+                    ],
+                    "Notas": [(n or "") for n in base_filtered["notas"].values],
+                    "Excluir": [False] * len(base_filtered),
+                })
+
+                # Build the unit selectbox options dynamically so that legacy/odd
+                # units don't get rejected by the editor.
+                unit_options = list(STANDARD_UNITS)
+                for u in editor_df["Unidade"].unique():
+                    if u and u not in unit_options:
+                        unit_options.append(u)
+
+                edited = st.data_editor(
+                    editor_df,
+                    hide_index=True,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key="insumos_editor_all",
+                    column_config={
+                        "ID": st.column_config.TextColumn(
+                            "ID", disabled=True, width="small",
+                            help="Identificador único do insumo (não editável).",
                         ),
-                    ),
-                    "Unidade": st.column_config.SelectboxColumn(
-                        "Unidade", options=unit_options, width="small", required=True,
-                    ),
-                    "Marca padrão": st.column_config.TextColumn(
-                        "Marca padrão", width="small",
-                    ),
-                    "Preço atual": st.column_config.NumberColumn(
-                        "Preço atual", format="R$ %.2f", width="small", min_value=0.0,
-                        help=(
-                            "Editar grava um override manual direto no insumo — "
-                            "não cria Compra. O override expira sozinho quando "
-                            "uma Compra mais nova entrar."
+                        "🍯": st.column_config.TextColumn(
+                            "🍯", disabled=True, width="small",
+                            help="Emoji da categoria — só visual.",
                         ),
-                    ),
-                    "Origem": st.column_config.TextColumn(
-                        "Origem", disabled=True, width="small",
-                        help=(
-                            "De onde vem o Preço atual: 📊 Média = média ponderada "
-                            "das últimas 3 compras; ✋ Manual = override que você "
-                            "definiu; — = sem dados."
+                        "Insumo": st.column_config.TextColumn(
+                            "Insumo", width="medium",
+                            help="Nome do insumo. Editável.",
                         ),
-                    ),
-                    "Compras": st.column_config.NumberColumn(
-                        "Compras", disabled=True, format="%d", width="small",
-                    ),
-                    "Última": st.column_config.DateColumn(
-                        "Última", disabled=True, format="DD/MM/YYYY", width="small",
-                    ),
-                    "Notas": st.column_config.TextColumn(
-                        "Notas", width="medium",
-                    ),
-                    "Excluir": st.column_config.CheckboxColumn(
-                        "Excluir", width="small",
-                        help="Marque para deletar este insumo ao salvar.",
-                    ),
-                },
-            )
-
-            # --- Diff editor_df vs edited and build the save plan ---
-            name_changes: list[dict] = []
-            unit_changes: list[dict] = []
-            price_updates: list[dict] = []
-            deletions: list[dict] = []
-
-            for i, row in edited.iterrows():
-                orig = editor_df.iloc[i]
-                produto_id = row["ID"]
-
-                new_nome = str(row["Insumo"] or "").strip()
-                orig_nome = str(orig["Insumo"] or "").strip()
-                new_unidade = (row["Unidade"] or "UN").strip()
-                new_marca = str(row["Marca padrão"] or "").strip()
-                new_notas = str(row["Notas"] or "").strip()
-                old_unidade = (orig["Unidade"] or "").strip()
-
-                # Unit changes are tracked separately because they retroactively
-                # reinterpret every existing Compra's unit price.
-                if new_unidade != old_unidade and not bool(row["Excluir"]):
-                    unit_changes.append({
-                        "produto_id": produto_id,
-                        "nome": new_nome,
-                        "from": old_unidade or "?",
-                        "to": new_unidade,
-                    })
-
-                # Track produto field edits (anything except price/excluir).
-                if (
-                    new_nome != orig_nome
-                    or new_unidade != old_unidade
-                    or new_marca != str(orig["Marca padrão"] or "").strip()
-                    or new_notas != str(orig["Notas"] or "").strip()
-                ):
-                    name_changes.append({
-                        "produto_id": produto_id,
-                        "nome": new_nome,
-                        "unidade": new_unidade,
-                        "marca": new_marca,
-                        "notas": new_notas,
-                    })
-
-                # Track price updates — typing a different positive value sets
-                # a manual override on the produto (Produtos.G/H). Clearing the
-                # cell removes the override. Either way: no Compra is created.
-                new_preco_raw = row["Preço atual"]
-                orig_preco_raw = orig["Preço atual"]
-                new_preco = (
-                    float(new_preco_raw)
-                    if new_preco_raw is not None and not pd.isna(new_preco_raw)
-                    else None
+                        "Categoria": st.column_config.TextColumn(
+                            "Categoria", disabled=True, width="small",
+                            help=(
+                                "Mudar a categoria de um insumo muda o prefixo do ID e "
+                                "exige migrar referências. Use o script "
+                                "scripts/migrate_categoria.py."
+                            ),
+                        ),
+                        "Unidade": st.column_config.SelectboxColumn(
+                            "Unidade", options=unit_options, width="small", required=True,
+                        ),
+                        "Marca padrão": st.column_config.TextColumn(
+                            "Marca padrão", width="small",
+                        ),
+                        "Preço atual": st.column_config.NumberColumn(
+                            "Preço atual", format="R$ %.2f", width="small", min_value=0.0,
+                            help=(
+                                "Editar grava um override manual direto no insumo — "
+                                "não cria Compra. O override expira sozinho quando "
+                                "uma Compra mais nova entrar."
+                            ),
+                        ),
+                        "Origem": st.column_config.TextColumn(
+                            "Origem", disabled=True, width="small",
+                            help=(
+                                "De onde vem o Preço atual: 📊 Média = média ponderada "
+                                "das últimas 3 compras; ✋ Manual = override que você "
+                                "definiu; — = sem dados."
+                            ),
+                        ),
+                        "Compras": st.column_config.NumberColumn(
+                            "Compras", disabled=True, format="%d", width="small",
+                        ),
+                        "Última": st.column_config.DateColumn(
+                            "Última", disabled=True, format="DD/MM/YYYY", width="small",
+                        ),
+                        "Notas": st.column_config.TextColumn(
+                            "Notas", width="medium",
+                        ),
+                        "Excluir": st.column_config.CheckboxColumn(
+                            "Excluir", width="small",
+                            help="Marque para deletar este insumo ao salvar.",
+                        ),
+                    },
                 )
-                orig_preco = (
-                    float(orig_preco_raw)
-                    if orig_preco_raw is not None and not pd.isna(orig_preco_raw)
-                    else None
-                )
-                orig_origem = str(base_filtered.iloc[i].get("origem") or "")
-                if new_preco is not None and new_preco > 0:
-                    price_changed = (
-                        orig_preco is None or abs(new_preco - orig_preco) > 0.005
+
+                # --- Diff editor_df vs edited and build the save plan ---
+                name_changes: list[dict] = []
+                unit_changes: list[dict] = []
+                price_updates: list[dict] = []
+                deletions: list[dict] = []
+
+                for i, row in edited.iterrows():
+                    orig = editor_df.iloc[i]
+                    produto_id = row["ID"]
+
+                    new_nome = str(row["Insumo"] or "").strip()
+                    orig_nome = str(orig["Insumo"] or "").strip()
+                    new_unidade = (row["Unidade"] or "UN").strip()
+                    new_marca = str(row["Marca padrão"] or "").strip()
+                    new_notas = str(row["Notas"] or "").strip()
+                    old_unidade = (orig["Unidade"] or "").strip()
+
+                    # Unit changes are tracked separately because they retroactively
+                    # reinterpret every existing Compra's unit price.
+                    if new_unidade != old_unidade and not bool(row["Excluir"]):
+                        unit_changes.append({
+                            "produto_id": produto_id,
+                            "nome": new_nome,
+                            "from": old_unidade or "?",
+                            "to": new_unidade,
+                        })
+
+                    # Track produto field edits (anything except price/excluir).
+                    if (
+                        new_nome != orig_nome
+                        or new_unidade != old_unidade
+                        or new_marca != str(orig["Marca padrão"] or "").strip()
+                        or new_notas != str(orig["Notas"] or "").strip()
+                    ):
+                        name_changes.append({
+                            "produto_id": produto_id,
+                            "nome": new_nome,
+                            "unidade": new_unidade,
+                            "marca": new_marca,
+                            "notas": new_notas,
+                        })
+
+                    # Track price updates — typing a different positive value sets
+                    # a manual override on the produto (Produtos.G/H). Clearing the
+                    # cell removes the override. Either way: no Compra is created.
+                    new_preco_raw = row["Preço atual"]
+                    orig_preco_raw = orig["Preço atual"]
+                    new_preco = (
+                        float(new_preco_raw)
+                        if new_preco_raw is not None and not pd.isna(new_preco_raw)
+                        else None
                     )
-                    if price_changed:
+                    orig_preco = (
+                        float(orig_preco_raw)
+                        if orig_preco_raw is not None and not pd.isna(orig_preco_raw)
+                        else None
+                    )
+                    orig_origem = str(base_filtered.iloc[i].get("origem") or "")
+                    if new_preco is not None and new_preco > 0:
+                        price_changed = (
+                            orig_preco is None or abs(new_preco - orig_preco) > 0.005
+                        )
+                        if price_changed:
+                            price_updates.append({
+                                "produto_id": produto_id,
+                                "action": "set",
+                                "preco": float(new_preco),
+                            })
+                    elif new_preco is None and orig_preco is not None and orig_origem == "manual":
+                        # Cleared the cell on a row that had an active override —
+                        # interpret as "remove override". Clearing on a WAC row
+                        # is a no-op (nothing to remove).
                         price_updates.append({
                             "produto_id": produto_id,
-                            "action": "set",
-                            "preco": float(new_preco),
+                            "action": "clear",
                         })
-                elif new_preco is None and orig_preco is not None and orig_origem == "manual":
-                    # Cleared the cell on a row that had an active override —
-                    # interpret as "remove override". Clearing on a WAC row
-                    # is a no-op (nothing to remove).
-                    price_updates.append({
-                        "produto_id": produto_id,
-                        "action": "clear",
-                    })
 
-                # Track deletions (bulk path).
-                if bool(row["Excluir"]):
-                    deletions.append({
-                        "produto_id": produto_id,
-                        "nome": new_nome,
-                        "n_compras": int(orig["Compras"]),
-                    })
+                    # Track deletions (bulk path).
+                    if bool(row["Excluir"]):
+                        deletions.append({
+                            "produto_id": produto_id,
+                            "nome": new_nome,
+                            "n_compras": int(orig["Compras"]),
+                        })
 
-            has_changes = bool(name_changes or price_updates or deletions)
+                has_changes = bool(name_changes or price_updates or deletions)
 
-            # Two classes of "critical" changes need an explicit checkbox to unlock save:
-            # (1) Unit changes — retroactively reinterpret every past Compra of the produto
-            # (2) Deletions of produtos that still have Compras
-            deletions_with_refs = [d for d in deletions if d["n_compras"] > 0]
-            critical_changes = bool(unit_changes or deletions_with_refs)
+                # Two classes of "critical" changes need an explicit checkbox to unlock save:
+                # (1) Unit changes — retroactively reinterpret every past Compra of the produto
+                # (2) Deletions of produtos that still have Compras
+                deletions_with_refs = [d for d in deletions if d["n_compras"] > 0]
+                critical_changes = bool(unit_changes or deletions_with_refs)
 
-            if has_changes:
-                bullets = []
-                if name_changes:
-                    bullets.append(f"✏️ {len(name_changes)} edição(ões) de cadastro")
-                if price_updates:
-                    bullets.append(f"💰 {len(price_updates)} atualização(ões) de preço")
-                if deletions:
-                    bullets.append(f"🗑️ {len(deletions)} exclusão(ões)")
-                st.caption("Alterações pendentes: " + " · ".join(bullets))
+                if has_changes:
+                    bullets = []
+                    if name_changes:
+                        bullets.append(f"✏️ {len(name_changes)} edição(ões) de cadastro")
+                    if price_updates:
+                        bullets.append(f"💰 {len(price_updates)} atualização(ões) de preço")
+                    if deletions:
+                        bullets.append(f"🗑️ {len(deletions)} exclusão(ões)")
+                    st.caption("Alterações pendentes: " + " · ".join(bullets))
 
-            if critical_changes:
-                with st.container(border=True):
-                    st.markdown("**⚠️ Mudanças que impactam dados além desta linha:**")
-                    for u in unit_changes:
-                        st.write(
-                            f"- **Unidade** de `{u['produto_id']}` ({u['nome']}): "
-                            f"**{u['from']} → {u['to']}**. "
-                            f"_Isso recalcula o preço unitário de todas as Compras anteriores desse insumo._"
+                if critical_changes:
+                    with st.container(border=True):
+                        st.markdown("**⚠️ Mudanças que impactam dados além desta linha:**")
+                        for u in unit_changes:
+                            st.write(
+                                f"- **Unidade** de `{u['produto_id']}` ({u['nome']}): "
+                                f"**{u['from']} → {u['to']}**. "
+                                f"_Isso recalcula o preço unitário de todas as Compras anteriores desse insumo._"
+                            )
+                        for d in deletions_with_refs:
+                            st.write(
+                                f"- **Excluir** `{d['produto_id']}` ({d['nome']}): "
+                                f"tem **{d['n_compras']} compra(s)** registradas — vão ficar órfãs."
+                            )
+                        confirm_critical = st.checkbox(
+                            "Confirmo as mudanças críticas acima e quero salvar",
+                            key="insumos_confirm_critical",
                         )
-                    for d in deletions_with_refs:
-                        st.write(
-                            f"- **Excluir** `{d['produto_id']}` ({d['nome']}): "
-                            f"tem **{d['n_compras']} compra(s)** registradas — vão ficar órfãs."
+                else:
+                    confirm_critical = True
+                    # Soft warning for deletions without Compras (no checkbox needed)
+                    if deletions:
+                        st.warning(
+                            "Você marcou para excluir: "
+                            + ", ".join(f"`{d['produto_id']}` ({d['nome']})" for d in deletions)
+                            + "."
                         )
-                    confirm_critical = st.checkbox(
-                        "Confirmo as mudanças críticas acima e quero salvar",
-                        key="insumos_confirm_critical",
-                    )
-            else:
-                confirm_critical = True
-                # Soft warning for deletions without Compras (no checkbox needed)
-                if deletions:
-                    st.warning(
-                        "Você marcou para excluir: "
-                        + ", ".join(f"`{d['produto_id']}` ({d['nome']})" for d in deletions)
-                        + "."
-                    )
 
-            save_clicked = st.button(
-                "💾 Salvar alterações",
-                type="primary",
-                disabled=(not has_changes) or (critical_changes and not confirm_critical),
-                use_container_width=False,
-                key="ins_tabela_save",
-            )
+                save_clicked = st.button(
+                    "💾 Salvar alterações",
+                    type="primary",
+                    disabled=(not has_changes) or (critical_changes and not confirm_critical),
+                    use_container_width=False,
+                    key="ins_tabela_save",
+                )
 
-            if save_clicked and has_changes:
-                try:
-                    service = data.get_service()
-                    spreadsheet_id = data._spreadsheet_id()
+                if save_clicked and has_changes:
+                    try:
+                        service = data.get_service()
+                        spreadsheet_id = data._spreadsheet_id()
 
-                    # 1) Field edits — update Produtos columns B (Nome),
-                    #    C (Unidade), D (Notas), F (Marca_padrao). Column E
-                    #    (Relacionados) stays.
-                    for nc in name_changes:
-                        row_num = data.find_row_by_id("Produtos", nc["produto_id"])
-                        service.spreadsheets().values().update(
-                            spreadsheetId=spreadsheet_id,
-                            range=f"Produtos!B{row_num}:D{row_num}",
-                            valueInputOption="USER_ENTERED",
-                            body={"values": [[nc["nome"], nc["unidade"], nc["notas"]]]},
-                        ).execute()
-                        service.spreadsheets().values().update(
-                            spreadsheetId=spreadsheet_id,
-                            range=f"Produtos!F{row_num}",
-                            valueInputOption="USER_ENTERED",
-                            body={"values": [[nc["marca"]]]},
-                        ).execute()
+                        # 1) Field edits — update Produtos columns B (Nome),
+                        #    C (Unidade), D (Notas), F (Marca_padrao). Column E
+                        #    (Relacionados) stays.
+                        for nc in name_changes:
+                            row_num = data.find_row_by_id("Produtos", nc["produto_id"])
+                            service.spreadsheets().values().update(
+                                spreadsheetId=spreadsheet_id,
+                                range=f"Produtos!B{row_num}:D{row_num}",
+                                valueInputOption="USER_ENTERED",
+                                body={"values": [[nc["nome"], nc["unidade"], nc["notas"]]]},
+                            ).execute()
+                            service.spreadsheets().values().update(
+                                spreadsheetId=spreadsheet_id,
+                                range=f"Produtos!F{row_num}",
+                                valueInputOption="USER_ENTERED",
+                                body={"values": [[nc["marca"]]]},
+                            ).execute()
 
-                    # 2) Price updates — write directly to Produtos.G/H.
-                    #    No Compra is created. The override expires when a
-                    #    newer Compra for this produto is registered.
-                    today_iso = date.today().isoformat()
-                    for pu in price_updates:
-                        row_num = data.find_row_by_id("Produtos", pu["produto_id"])
-                        if pu["action"] == "set":
-                            values = [[pu["preco"], today_iso]]
-                        else:  # "clear"
-                            values = [["", ""]]
-                        service.spreadsheets().values().update(
-                            spreadsheetId=spreadsheet_id,
-                            range=f"Produtos!G{row_num}:H{row_num}",
-                            valueInputOption="USER_ENTERED",
-                            body={"values": values},
-                        ).execute()
+                        # 2) Price updates — write directly to Produtos.G/H.
+                        #    No Compra is created. The override expires when a
+                        #    newer Compra for this produto is registered.
+                        today_iso = date.today().isoformat()
+                        for pu in price_updates:
+                            row_num = data.find_row_by_id("Produtos", pu["produto_id"])
+                            if pu["action"] == "set":
+                                values = [[pu["preco"], today_iso]]
+                            else:  # "clear"
+                                values = [["", ""]]
+                            service.spreadsheets().values().update(
+                                spreadsheetId=spreadsheet_id,
+                                range=f"Produtos!G{row_num}:H{row_num}",
+                                valueInputOption="USER_ENTERED",
+                                body={"values": values},
+                            ).execute()
 
-                    # 3) Deletions — done last so row numbers for earlier
-                    #    writes stay correct. We re-resolve the row each
-                    #    time because deleting shifts row numbers.
-                    for d in deletions:
-                        row_num = data.find_row_by_id("Produtos", d["produto_id"])
-                        data.delete_row("Produtos", row_num)
+                        # 3) Deletions — done last so row numbers for earlier
+                        #    writes stay correct. We re-resolve the row each
+                        #    time because deleting shifts row numbers.
+                        for d in deletions:
+                            row_num = data.find_row_by_id("Produtos", d["produto_id"])
+                            data.delete_row("Produtos", row_num)
 
-                    data.invalidate_cache()
-                    st.success(
-                        f"✅ Salvo: {len(name_changes)} edição(ões), "
-                        f"{len(price_updates)} atualização(ões) de preço, "
-                        f"{len(deletions)} exclusão(ões)."
-                    )
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                        data.invalidate_cache()
+                        st.success(
+                            f"✅ Salvo: {len(name_changes)} edição(ões), "
+                            f"{len(price_updates)} atualização(ões) de preço, "
+                            f"{len(deletions)} exclusão(ões)."
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao salvar: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
 
 
-# ============================================================================
+    # ============================================================================
 # Lista — sub-tabs per categoria, vertical list of cards with expanders.
 # ============================================================================
 

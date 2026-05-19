@@ -96,7 +96,12 @@ disp = precos.copy()
 disp["Tamanho"] = disp["tamanho_id"].map(lambda t: f"{t} — {tam_map.get(t, t)}")
 disp = disp.sort_values(["tamanho_id", "tipo_cliente", "qtde_min"])
 
-# Render as data_editor (limited — qtde_min and preco are editable; tamanho/tipo not)
+# Toggle: view (st.table) vs edit (data_editor).
+prc_edit_key = "precos_edit_mode"
+if prc_edit_key not in st.session_state:
+    st.session_state[prc_edit_key] = False
+prc_edit_active = st.session_state[prc_edit_key]
+
 view = pd.DataFrame({
     "Tamanho": disp["Tamanho"].values,
     "Tipo": disp["tipo_cliente"].values,
@@ -105,6 +110,21 @@ view = pd.DataFrame({
     "Notas": disp["notas"].values,
     "Excluir": [False] * len(disp),
 })
+
+if not prc_edit_active:
+    # --- VIEW MODE ---
+    view_disp = view.drop(columns=["Excluir"]).copy()
+    view_disp["Preço unit."] = view_disp["Preço unit."].apply(lambda v: brl(float(v)) if pd.notna(v) else "—")
+    st.table(view_disp.set_index("Tamanho"))
+    if st.button("✏️ Editar tabela", key="precos_edit_btn"):
+        st.session_state[prc_edit_key] = True
+        st.rerun()
+    st.stop()
+
+st.info("✏️ Modo de edição **ativo**.")
+if st.button("✖ Cancelar edição", key="precos_cancel_btn"):
+    st.session_state[prc_edit_key] = False
+    st.rerun()
 
 edited = st.data_editor(
     view, hide_index=True, use_container_width=True, num_rows="fixed",
@@ -166,6 +186,7 @@ if st.button("💾 Salvar", type="primary", disabled=not has):
             data.delete_row("Precos", d["sheet_row"])
 
         data.invalidate_cache()
+        st.session_state[prc_edit_key] = False
         st.success(f"✅ Salvo: {len(changes)} edição(ões), {len(deletions)} exclusão(ões).")
         st.rerun()
     except Exception as e:
