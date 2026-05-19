@@ -232,6 +232,7 @@ with tab_list:
 
     # --- Diff editor_df vs edited and produce a save plan ---
     name_changes: list[dict] = []   # produto edits (nome/unidade/marca/notas)
+    unit_changes: list[dict] = []   # subset of name_changes that touch Unidade — destructive
     price_updates: list[dict] = []  # new Compra to append
     deletions: list[dict] = []      # rows to delete
 
@@ -262,10 +263,22 @@ with tab_list:
             new_marca = (row["Marca padrão"] or "").strip()
             new_notas = (row["Notas"] or "").strip()
 
+            old_unidade = (orig["Unidade"] or "").strip()
+
+            # Unit changes are tracked separately because they retroactively
+            # reinterpret every existing Compra's unit price.
+            if new_unidade != old_unidade and not bool(row["Excluir"]):
+                unit_changes.append({
+                    "produto_id": produto_id,
+                    "nome": new_nome,
+                    "from": old_unidade or "?",
+                    "to": new_unidade,
+                })
+
             # Track produto field edits (anything except price/excluir/new_preco).
             if (
                 new_nome != orig_nome
-                or new_unidade != (orig["Unidade"] or "").strip()
+                or new_unidade != old_unidade
                 or new_marca != (orig["Marca padrão"] or "").strip()
                 or new_notas != (orig["Notas"] or "").strip()
             ):
@@ -301,16 +314,11 @@ with tab_list:
     # --- Confirmation summary + save button ---
     has_changes = bool(name_changes or price_updates or deletions)
 
-    if deletions:
-        with_compras = [d for d in deletions if d["n_compras"] > 0]
-        st.warning(
-            "⚠️ Você marcou para excluir: "
-            + ", ".join(f"`{d['produto_id']}` ({d['nome']})" for d in deletions)
-            + (
-                f". {len(with_compras)} desses têm compras registradas — elas vão ficar órfãs."
-                if with_compras else "."
-            )
-        )
+    # Two classes of "critical" changes need an explicit checkbox to unlock save:
+    # (1) Unit changes — retroactively reinterpret every past Compra of the produto
+    # (2) Deletions of produtos that still have Compras
+    deletions_with_refs = [d for d in deletions if d["n_compras"] > 0]
+    critical_changes = bool(unit_changes or deletions_with_refs)
 
     if has_changes:
         bullets = []
@@ -322,10 +330,38 @@ with tab_list:
             bullets.append(f"🗑️ {len(deletions)} exclusão(ões)")
         st.caption("Alterações pendentes: " + " · ".join(bullets))
 
+    if critical_changes:
+        with st.container(border=True):
+            st.markdown("**⚠️ Mudanças que impactam dados além desta linha:**")
+            for u in unit_changes:
+                st.write(
+                    f"- **Unidade** de `{u['produto_id']}` ({u['nome']}): "
+                    f"**{u['from']} → {u['to']}**. "
+                    f"_Isso recalcula o preço unitário de todas as Compras anteriores desse insumo._"
+                )
+            for d in deletions_with_refs:
+                st.write(
+                    f"- **Excluir** `{d['produto_id']}` ({d['nome']}): "
+                    f"tem **{d['n_compras']} compra(s)** registradas — vão ficar órfãs."
+                )
+            confirm_critical = st.checkbox(
+                "Confirmo as mudanças críticas acima e quero salvar",
+                key="insumos_confirm_critical",
+            )
+    else:
+        confirm_critical = True
+        # Soft warning for deletions without Compras (no checkbox needed)
+        if deletions:
+            st.warning(
+                "Você marcou para excluir: "
+                + ", ".join(f"`{d['produto_id']}` ({d['nome']})" for d in deletions)
+                + "."
+            )
+
     save_clicked = st.button(
         "💾 Salvar alterações",
         type="primary",
-        disabled=not has_changes,
+        disabled=(not has_changes) or (critical_changes and not confirm_critical),
         use_container_width=False,
     )
 

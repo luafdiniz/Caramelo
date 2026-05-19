@@ -403,12 +403,33 @@ with tab_list:
                 st.markdown('<div style="height: 0.4rem;"></div>', unsafe_allow_html=True)
                 compact_kpi("Custo total da receita", brl(custo_total))
 
+                # --- Critical-change gate: switching the padrão affects every
+                # tamanho that doesn't have an explicit receita_id ---
+                staged_padrao = bool(
+                    st.session_state.get(f"cfg_padrao_{receita_id}", is_padrao)
+                )
+                becoming_padrao = staged_padrao and not is_padrao
+                save_disabled = False
+                if becoming_padrao:
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**⚠️ Marcar como padrão**: "
+                            f"Todos os tamanhos que não têm receita específica "
+                            f"vão passar a usar **{(st.session_state.get(f'cfg_nome_{receita_id}') or receita['nome'])}** no cálculo de custo."
+                        )
+                        confirm_padrao = st.checkbox(
+                            "Confirmo trocar a receita padrão",
+                            key=f"confirm_padrao_{receita_id}",
+                        )
+                    save_disabled = not confirm_padrao
+
                 # --- Save button -----------------------------------------------
                 if st.button(
                     "💾 Salvar alterações",
                     key=f"save_{receita_id}",
                     use_container_width=True,
                     type="primary",
+                    disabled=save_disabled,
                 ):
                     try:
                         service = data.get_service()
