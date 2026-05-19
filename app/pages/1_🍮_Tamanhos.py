@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title, qty_fmt
+from lib.ui import setup_page, brl, brl_md, pct, compact_kpi, card_title, qty_fmt, qty_input_params
 
 
 CANAIS_DISPONIVEIS = ["Fornada", "Pronta Entrega", "Evento", "Encomenda"]
@@ -29,23 +29,11 @@ def _fmt_canal_option(c: str) -> str:
         return "✨ Marcar todos"
     return c
 
-# Units that don't divide: 1 forma, 2 ovos, 3 dúzias. No fractional clicks here.
-INTEGER_UNITS = {"UN", "DZ", "PENTE", "PAR", "JOGO"}
 
-
+# Thin alias for backward-compat — historically a private helper, now delegates
+# to lib.ui.qty_input_params so Receitas can share the same logic.
 def _qty_input_params(produto_id: str, produtos_df: pd.DataFrame):
-    """Return (min_value, step, format, is_int) for a number_input based on the
-    produto's unit. Integer-only for countable units (forma, ovo, pacote, etc.),
-    fractional for measurable ones (kg, l, m)."""
-    if produtos_df.empty:
-        return 0.0, 0.05, "%.2f", False
-    prod = produtos_df[produtos_df["id"] == produto_id]
-    if prod.empty:
-        return 0.0, 0.05, "%.2f", False
-    unidade = (prod.iloc[0].get("unidade") or "").strip().upper()
-    if unidade in INTEGER_UNITS:
-        return 0, 1, "%d", True
-    return 0.0, 0.05, "%.2f", False
+    return qty_input_params(produto_id, produtos_df)
 
 
 def _parse_canais(raw: str) -> list:
@@ -89,6 +77,15 @@ with tab_list:
 
     df = data.get_tamanho_costs()
     produtos_df = data.get_produtos()
+    # Receitas may not exist yet (pre-migration). All reads below are defensive
+    # so the page still renders if the new schema isn't in place.
+    receitas_df = data.get_receitas()
+    receitas_by_id = {r["receita_id"]: r for _, r in receitas_df.iterrows()} if not receitas_df.empty else {}
+    padrao_receita_id = ""
+    if not receitas_df.empty:
+        padrao_rows = receitas_df[receitas_df["padrao"]]
+        if not padrao_rows.empty:
+            padrao_receita_id = str(padrao_rows.iloc[0]["receita_id"])
     if df.empty:
         st.info("Nenhum tamanho cadastrado ainda.")
     else:
@@ -130,6 +127,11 @@ with tab_list:
                         info_bits.append(f"{int(row['volume_ml'])} ml")
                     if pd.notna(row.get("rendimento")):
                         info_bits.append(f"Rendimento {int(row['rendimento'])}/receita")
+                    # Show the receita name only when this tamanho uses a non-padrao
+                    # one — avoids cluttering every card with "Receita: Tradicional".
+                    row_receita_id = (row.get("receita_id") or "").strip()
+                    if row_receita_id and row_receita_id != padrao_receita_id and row_receita_id in receitas_by_id:
+                        info_bits.append(f"Receita: {receitas_by_id[row_receita_id]['nome']}")
                     card_title(row["nome"], badge=row["id"], meta=" · ".join(info_bits), meta_below=True)
 
                 with col2:
@@ -155,7 +157,15 @@ with tab_list:
                 st.markdown('<div style="height: 0.6rem;"></div>', unsafe_allow_html=True)
 
                 with st.expander("Ver composição completa"):
-                    st.markdown("**🍯 Ingredientes** (mesma receita base pra todos os tamanhos)")
+                    # Resolve which receita this tamanho uses for the heading.
+                    tam_rid = (row.get("receita_id") or "").strip() or padrao_receita_id
+                    tam_receita_nome = receitas_by_id.get(tam_rid, {}).get("nome", "") if tam_rid else ""
+                    receita_label = (
+                        f" ({tam_receita_nome})"
+                        if tam_receita_nome else
+                        ""
+                    )
+                    st.markdown(f"**🍯 Ingredientes da receita{receita_label}**")
                     custo_ali, brk_ali = data.calc_custo_alimento_unid(row["id"])
                     if not brk_ali.empty:
                         disp_ali = brk_ali[["produto_id", "produto_nome", "qtde", "preco_unit_atual", "custo_na_receita"]].copy()
@@ -170,17 +180,11 @@ with tab_list:
                             f"**{brl_md(custo_ali)} por unidade**"
                         )
 
-                    st.markdown("**📦 Embalagens deste tamanho**")
+                    # Embalagens breakdown is needed below by the edit form to
+                    # know which packages are already attached to this tamanho.
+                    # The read-only table that used to live here was removed —
+                    # the edit form below is now the single source of truth.
                     custo_emb, brk_emb = data.calc_custo_embalagem_unid(row["id"])
-                    if not brk_emb.empty:
-                        disp_emb = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade", "preco_unit_atual", "custo_por_unidade"]].copy()
-                        disp_emb["qtde_por_unidade"] = disp_emb["qtde_por_unidade"].apply(qty_fmt)
-                        disp_emb["preco_unit_atual"] = disp_emb["preco_unit_atual"].apply(brl)
-                        disp_emb["custo_por_unidade"] = disp_emb["custo_por_unidade"].apply(brl)
-                        disp_emb.columns = ["Produto", "Nome", "Qtde/unid", "Preço unit.", "Custo por pudim"]
-                        st.table(disp_emb.set_index("Produto"))
-                    else:
-                        st.info("Nenhuma embalagem associada a este tamanho.")
 
                     # --- Edit section ---
                     st.divider()
@@ -209,6 +213,39 @@ with tab_list:
                                 min_value=1,
                                 value=int(row["rendimento"]) if pd.notna(row.get("rendimento")) else 1,
                             )
+                            # Receita selectbox. The "(padrão)" option saves an empty
+                            # string in column I → the calc layer falls back to the
+                            # receita marked padrao at compute time. That way changing
+                            # the padrao later automatically flows to every tamanho
+                            # that didn't lock in a specific receita.
+                            if not receitas_df.empty:
+                                receita_ids = list(receitas_df["receita_id"].astype(str))
+                                receita_options = [""] + receita_ids
+                                row_rid = (row.get("receita_id") or "").strip()
+                                # If the saved id no longer exists (e.g. deleted), fall back to padrao.
+                                if row_rid and row_rid not in receita_ids:
+                                    row_rid = ""
+                                try:
+                                    default_idx = receita_options.index(row_rid)
+                                except ValueError:
+                                    default_idx = 0
+                                def _fmt_receita_opt(rid: str) -> str:
+                                    if not rid:
+                                        nome = receitas_by_id.get(padrao_receita_id, {}).get("nome", "") if padrao_receita_id else ""
+                                        suffix = f" — {nome}" if nome else ""
+                                        return f"(padrão){suffix}"
+                                    nome = receitas_by_id.get(rid, {}).get("nome", "")
+                                    return f"{rid} — {nome}" if nome else rid
+                                new_receita_id = st.selectbox(
+                                    "Receita",
+                                    options=receita_options,
+                                    index=default_idx,
+                                    format_func=_fmt_receita_opt,
+                                    help="Deixe '(padrão)' pra usar a receita marcada como padrão em 📜 Receitas.",
+                                )
+                            else:
+                                # No Receitas tab yet — keep whatever was there (likely empty).
+                                new_receita_id = (row.get("receita_id") or "").strip()
                         with ec2:
                             # Multiselect with a "✨ Marcar todos" sentinel option in
                             # the dropdown. If submitted with the sentinel selected,
@@ -223,9 +260,10 @@ with tab_list:
                                 new_canal_list = list(CANAIS_DISPONIVEIS)
                             new_canal = ",".join(new_canal_list)
 
-                        # Edit packaging: show current + allow add/remove
+                        # Edit packaging: single integrated section — add at the
+                        # top, then list & edit existing ones below.
                         st.markdown("**Embalagens deste tamanho**")
-                        st.caption("Ajuste a quantidade de cada uma. Marque 🗑️ ou zere o número pra remover.")
+                        st.caption("Use o menu pra adicionar. Ajuste a quantidade ou marque 🗑️ pra remover.")
 
                         # Bulk-remove shortcut — lives inside the form because Streamlit
                         # forms don't fire on_change. Effect is applied at save time
@@ -250,31 +288,9 @@ with tab_list:
                         current_pkgs = brk_emb[["produto_id", "produto_nome", "qtde_por_unidade"]].copy() if not brk_emb.empty else pd.DataFrame(columns=["produto_id", "produto_nome", "qtde_por_unidade"])
 
                         edited_qtys = {}
-                        for _, pkg in current_pkgs.iterrows():
-                            min_v, step_v, fmt_v, is_int = _qty_input_params(pkg["produto_id"], produtos_df)
-                            raw_val = pkg.get("qtde_por_unidade")
-                            if pd.notna(raw_val):
-                                val_v = int(round(float(raw_val))) if is_int else float(raw_val)
-                            else:
-                                val_v = 1 if is_int else 1.0
-                            qcol, rcol = st.columns([5, 1])
-                            with qcol:
-                                qty = st.number_input(
-                                    f"{pkg['produto_id']} — {pkg['produto_nome']}",
-                                    min_value=min_v,
-                                    value=val_v,
-                                    step=step_v, format=fmt_v,
-                                    key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
-                                )
-                            with rcol:
-                                st.markdown('<div style="height: 1.8rem;"></div>', unsafe_allow_html=True)
-                                remove = st.checkbox(
-                                    "🗑️", key=f"rm_{row['id']}_{pkg['produto_id']}",
-                                    help="Remover essa embalagem",
-                                )
-                            edited_qtys[pkg["produto_id"]] = 0 if remove else qty
 
-                        # Add new packaging — sort FOR first, then EMB, alphabetic by name within each
+                        # --- Add new packaging (TOP) ---
+                        # Sort FOR first, then EMB, alphabetic by name within each.
                         _cat_order = {"FOR": 0, "EMB": 1}
                         all_pkg_opts = produtos_df[produtos_df["categoria"].isin(_cat_order.keys())].copy() if not produtos_df.empty else pd.DataFrame()
                         if not all_pkg_opts.empty:
@@ -298,6 +314,36 @@ with tab_list:
                                 step=step_v, format=fmt_v,
                                 key=f"new_qty_{row['id']}_{npkg}",
                             )
+
+                        # Tiny visual gap between the "add" controls and the
+                        # existing-package rows so they don't blur together.
+                        if not current_pkgs.empty:
+                            st.markdown('<div style="height: 0.4rem;"></div>', unsafe_allow_html=True)
+
+                        # --- Existing packaging rows ---
+                        for _, pkg in current_pkgs.iterrows():
+                            min_v, step_v, fmt_v, is_int = _qty_input_params(pkg["produto_id"], produtos_df)
+                            raw_val = pkg.get("qtde_por_unidade")
+                            if pd.notna(raw_val):
+                                val_v = int(round(float(raw_val))) if is_int else float(raw_val)
+                            else:
+                                val_v = 1 if is_int else 1.0
+                            qcol, rcol = st.columns([5, 1])
+                            with qcol:
+                                qty = st.number_input(
+                                    f"{pkg['produto_id']} — {pkg['produto_nome']}",
+                                    min_value=min_v,
+                                    value=val_v,
+                                    step=step_v, format=fmt_v,
+                                    key=f"edit_qty_{row['id']}_{pkg['produto_id']}",
+                                )
+                            with rcol:
+                                st.markdown('<div style="height: 1.8rem;"></div>', unsafe_allow_html=True)
+                                remove = st.checkbox(
+                                    "🗑️", key=f"rm_{row['id']}_{pkg['produto_id']}",
+                                    help="Remover essa embalagem",
+                                )
+                            edited_qtys[pkg["produto_id"]] = 0 if remove else qty
 
                         if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
                             try:
@@ -337,6 +383,19 @@ with tab_list:
                                     valueInputOption="USER_ENTERED",
                                     body={"values": [[int(new_rendimento), new_canal, new_preco if new_preco > 0 else ""]]},
                                 ).execute()
+
+                                # Update Tamanhos!I (receita_id). Empty string means
+                                # "use padrao" — written as-is so the calc layer
+                                # falls back to the receita marked padrao at compute
+                                # time. We only attempt this if the Receitas schema
+                                # exists; otherwise the column isn't there yet.
+                                if not receitas_df.empty:
+                                    service.spreadsheets().values().update(
+                                        spreadsheetId=ssid,
+                                        range=f"Tamanhos!I{row_num}",
+                                        valueInputOption="USER_ENTERED",
+                                        body={"values": [[new_receita_id or ""]]},
+                                    ).execute()
 
                                 # Replace Embalagens_Por_Tamanho rows: delete old, insert new
                                 emb_all = service.spreadsheets().values().get(
