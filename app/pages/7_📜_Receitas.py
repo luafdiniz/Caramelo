@@ -6,6 +6,13 @@ fallback for tamanhos that haven't picked a specific recipe.
 
 The page guards against running before the migration: if the Receitas tab
 does not exist, it shows a warning and stops.
+
+Editing model (post-refactor):
+- Each component renders as an inline `st.data_editor` so Qtde / Unidade /
+  Remover can be edited directly in the visible table.
+- A `st.popover("⚙️ Configurar")` next to the title holds nome + padrao.
+- Delete is an expander at the bottom (rare destructive action).
+- A single `💾 Salvar alterações` button per receita commits all changes.
 """
 
 import os
@@ -18,14 +25,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.auth import require_auth
 from lib import data
-from lib.ui import setup_page, brl, compact_kpi, card_title, qty_fmt, qty_input_params
+from lib.ui import setup_page, brl, compact_kpi, card_title, qty_input_params
 
 
 COMPONENTES = ["calda", "massa"]
 COMPONENTE_LABEL = {"calda": "🍯 Calda", "massa": "🥚 Massa"}
 
-# Unit options for the ingredient editor — matches what Insumos uses.
-UNIDADE_OPTIONS = ["KG", "G", "L", "ML", "UN", "DZ", "PENTE", "PAR", "JOGO", "M", "CM"]
+# Unit options shown in the Unidade column. Matches what Insumos uses; the
+# data_editor's selectbox auto-extends with any non-standard current value
+# (computed per-receita below) so legacy units aren't lost.
+UNIDADE_OPTIONS = ["UN", "KG", "L", "M", "DZ", "PENTE", "G", "ML"]
 
 
 setup_page("Receitas", icon="📜")
@@ -99,198 +108,86 @@ def _ensure_single_padrao(service, ssid: str, padrao_receita_id: str) -> None:
         ).execute()
 
 
-# ---------------------------------------------------------------------------
-# Edit form (defined up-front so the list loop below can call it)
-# ---------------------------------------------------------------------------
-def _render_edit_form(
-    receita_id: str,
-    receita: pd.Series,
-    ing: pd.DataFrame,
-    produtos_df: pd.DataFrame,
-    is_padrao: bool,
-) -> None:
-    """Render the edit form for a single receita.
-
-    The form lets the user rename the receita, toggle padrao, adjust each
-    ingredient (qtde + unidade), remove ingredientes, and add new ones per
-    componente.
+def _build_component_df(
+    sub: pd.DataFrame,
+    compras_df: pd.DataFrame,
+) -> pd.DataFrame:
     """
-    with st.form(f"edit_receita_{receita_id}"):
-        new_nome = st.text_input("Nome", value=receita["nome"] or "")
-        new_padrao = st.checkbox(
-            "Marcar como padrão",
-            value=is_padrao,
-            help="Tamanhos sem receita explícita usam a padrão. Marcar essa desmarca as outras.",
+    Build the DataFrame shown by `st.data_editor` for one component.
+
+    Columns: ID, Nome, Qtde, Unidade, Custo, Remover.
+    `Custo` is recomputed from qtde × latest_unit_price, so it stays
+    accurate even when the user changes Qtde inline (after rerun).
+    """
+    if sub.empty:
+        return pd.DataFrame(
+            columns=["ID", "Nome", "Qtde", "Unidade", "Custo", "Remover"],
         )
+    rows = []
+    for _, r in sub.iterrows():
+        pid = r["produto_id"]
+        qtde = float(r["qtde"]) if pd.notna(r.get("qtde")) else 0.0
+        preco = data.latest_unit_price(pid, compras_df)
+        rows.append({
+            "ID": pid,
+            "Nome": r.get("produto_nome") or r.get("nome") or pid,
+            "Qtde": qtde,
+            "Unidade": (r.get("unidade") or "").strip().upper(),
+            "Custo": qtde * preco,
+            "Remover": False,
+        })
+    return pd.DataFrame(rows)
 
-        # Track edits keyed by (componente, produto_id).
-        edited_qtys: dict[tuple[str, str], float] = {}
-        edited_units: dict[tuple[str, str], str] = {}
-        new_ingredientes: list[tuple[str, str, float, str]] = []  # (componente, produto_id, qtde, unidade)
 
-        # Build a sorted list of ALI produtos for the "add" dropdowns.
-        ali_options = (
-            produtos_df[produtos_df["categoria"] == "ALI"].sort_values("nome")
-            if not produtos_df.empty else pd.DataFrame()
-        )
+def _unit_options_for(df: pd.DataFrame) -> list[str]:
+    """
+    Standard UNIDADE_OPTIONS extended with any non-standard unit already
+    present in `df["Unidade"]` (so legacy values aren't silently dropped).
+    """
+    extras: list[str] = []
+    if not df.empty and "Unidade" in df.columns:
+        for u in df["Unidade"].dropna().astype(str).str.strip().str.upper().unique():
+            if u and u not in UNIDADE_OPTIONS and u not in extras:
+                extras.append(u)
+    return UNIDADE_OPTIONS + extras
 
-        for comp in COMPONENTES:
-            st.markdown(f"#### {COMPONENTE_LABEL[comp]}")
-            sub = ing[ing["componente"] == comp]
 
-            # --- Add new ingredient row(s) for this componente ---
-            already_in = set(sub["produto_id"].tolist()) if not sub.empty else set()
-            add_pool = ali_options[~ali_options["id"].isin(already_in)] if not ali_options.empty else pd.DataFrame()
-            if not add_pool.empty:
-                add_pool = add_pool.copy()
-                add_pool["label"] = add_pool["id"] + " — " + add_pool["nome"]
-                added = st.multiselect(
-                    f"Adicionar ingrediente à {comp}",
-                    options=add_pool["id"].tolist(),
-                    format_func=lambda x: add_pool[add_pool["id"] == x]["label"].iloc[0],
-                    key=f"add_ing_{receita_id}_{comp}",
-                )
-                for pid in added:
-                    prod_row = produtos_df[produtos_df["id"] == pid].iloc[0]
-                    default_unit = (prod_row.get("unidade") or "").strip().upper() or "G"
-                    if default_unit not in UNIDADE_OPTIONS:
-                        unit_options = UNIDADE_OPTIONS + [default_unit]
-                    else:
-                        unit_options = UNIDADE_OPTIONS
-                    min_v, step_v, fmt_v, is_int = qty_input_params(pid, produtos_df)
-                    qcol, ucol = st.columns([2, 1])
-                    with qcol:
-                        qty = st.number_input(
-                            f"{pid} — {prod_row['nome']} (qtde)",
-                            min_value=min_v,
-                            value=(1 if is_int else 1.0),
-                            step=step_v, format=fmt_v,
-                            key=f"new_ing_qty_{receita_id}_{comp}_{pid}",
-                        )
-                    with ucol:
-                        unit = st.selectbox(
-                            "Unidade",
-                            unit_options,
-                            index=unit_options.index(default_unit),
-                            key=f"new_ing_unit_{receita_id}_{comp}_{pid}",
-                        )
-                    new_ingredientes.append((comp, pid, float(qty), unit))
+def _column_config(unit_options: list[str]) -> dict:
+    """Column config shared by both component data_editors."""
+    return {
+        "ID": st.column_config.TextColumn("ID", disabled=True, width="small"),
+        "Nome": st.column_config.TextColumn("Nome", disabled=True),
+        "Qtde": st.column_config.NumberColumn(
+            "Qtde",
+            min_value=0.0,
+            step=0.05,
+            format="%.3g",
+            required=True,
+        ),
+        "Unidade": st.column_config.SelectboxColumn(
+            "Unidade",
+            options=unit_options,
+            required=True,
+        ),
+        "Custo": st.column_config.TextColumn(
+            "Custo",
+            disabled=True,
+            help="Qtde × preço unitário mais recente. Atualiza ao salvar.",
+        ),
+        "Remover": st.column_config.CheckboxColumn(
+            "Remover",
+            help="Marque pra remover esse ingrediente ao salvar.",
+            default=False,
+        ),
+    }
 
-            # --- Existing rows ---
-            if sub.empty:
-                st.caption("_Nenhum ingrediente._")
-            else:
-                for _, ing_row in sub.iterrows():
-                    pid = ing_row["produto_id"]
-                    min_v, step_v, fmt_v, is_int = qty_input_params(pid, produtos_df)
-                    raw_val = ing_row.get("qtde")
-                    if pd.notna(raw_val):
-                        val_v = int(round(float(raw_val))) if is_int else float(raw_val)
-                    else:
-                        val_v = 1 if is_int else 1.0
-                    current_unit = (ing_row.get("unidade") or "").strip().upper() or "G"
-                    if current_unit not in UNIDADE_OPTIONS:
-                        unit_options = UNIDADE_OPTIONS + [current_unit]
-                    else:
-                        unit_options = UNIDADE_OPTIONS
 
-                    qcol, ucol, rcol = st.columns([3, 1, 1])
-                    with qcol:
-                        nome_disp = ing_row.get("produto_nome") or ing_row.get("nome") or pid
-                        qty = st.number_input(
-                            f"{pid} — {nome_disp}",
-                            min_value=min_v,
-                            value=val_v,
-                            step=step_v, format=fmt_v,
-                            key=f"edit_qty_{receita_id}_{comp}_{pid}",
-                        )
-                    with ucol:
-                        unit = st.selectbox(
-                            "Unidade",
-                            unit_options,
-                            index=unit_options.index(current_unit),
-                            key=f"edit_unit_{receita_id}_{comp}_{pid}",
-                            label_visibility="collapsed",
-                        )
-                    with rcol:
-                        st.markdown('<div style="height: 1.8rem;"></div>', unsafe_allow_html=True)
-                        remove = st.checkbox(
-                            "🗑️",
-                            key=f"rm_{receita_id}_{comp}_{pid}",
-                            help="Remover esse ingrediente",
-                        )
-                    edited_qtys[(comp, pid)] = 0 if remove else float(qty)
-                    edited_units[(comp, pid)] = unit
-
-        if st.form_submit_button("💾 Salvar alterações", use_container_width=True, type="primary"):
-            try:
-                service = data.get_service()
-                ssid = data._spreadsheet_id()
-
-                # 1. Update Receitas (nome + padrao). Notas left as-is.
-                if not new_nome.strip():
-                    st.error("Dá um nome pra receita.")
-                    st.stop()
-                if is_padrao and not new_padrao:
-                    st.error(
-                        "Não dá pra desmarcar a padrão sem marcar outra. "
-                        "Abre outra receita e marca-a como padrão primeiro."
-                    )
-                    st.stop()
-
-                rn = _find_receita_row_num(receita_id)
-                service.spreadsheets().values().update(
-                    spreadsheetId=ssid,
-                    range=f"Receitas!B{rn}:C{rn}",
-                    valueInputOption="USER_ENTERED",
-                    body={"values": [[new_nome.strip(), bool(new_padrao)]]},
-                ).execute()
-                if new_padrao:
-                    _ensure_single_padrao(service, ssid, receita_id)
-
-                # 2. Rewrite Receita_Ingredientes. The cleanest approach is:
-                #    - read all rows
-                #    - drop everything matching this receita_id
-                #    - append the new computed set
-                #    - clear + rewrite the whole block
-                ing_all = service.spreadsheets().values().get(
-                    spreadsheetId=ssid, range="Receita_Ingredientes!A2:F",
-                    valueRenderOption="UNFORMATTED_VALUE",
-                ).execute().get("values", [])
-                kept = [r for r in ing_all if r and (r + [""])[0] != receita_id]
-
-                # Add edited existing rows (skip removed = qty 0).
-                for (comp, pid), q in edited_qtys.items():
-                    if q <= 0:
-                        continue
-                    unidade = edited_units.get((comp, pid), "")
-                    nome_prod = ""
-                    if not produtos_df.empty:
-                        pr = produtos_df[produtos_df["id"] == pid]
-                        if not pr.empty:
-                            nome_prod = pr.iloc[0]["nome"] or ""
-                    kept.append([receita_id, pid, nome_prod, q, unidade, comp])
-
-                # Add brand-new rows.
-                for comp, pid, q, unidade in new_ingredientes:
-                    if q <= 0:
-                        continue
-                    nome_prod = ""
-                    if not produtos_df.empty:
-                        pr = produtos_df[produtos_df["id"] == pid]
-                        if not pr.empty:
-                            nome_prod = pr.iloc[0]["nome"] or ""
-                    kept.append([receita_id, pid, nome_prod, q, unidade, comp])
-
-                _rewrite_receita_ingredientes(service, ssid, kept)
-
-                data.invalidate_cache()
-                st.success(f"✅ {receita_id} atualizado!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
-                import traceback
-                st.code(traceback.format_exc())
+def _format_custo_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Render the Custo column as BRL strings for display only."""
+    out = df.copy()
+    if "Custo" in out.columns:
+        out["Custo"] = out["Custo"].apply(brl)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -317,28 +214,61 @@ with tab_list:
         # Pre-fetch all ingredients once so we don't hit the API per receita.
         all_ing = data.get_receita_ingredientes()
 
+        # ALI produtos pool (used by the "Adicionar ingrediente" selectbox).
+        ali_options = (
+            produtos_df[produtos_df["categoria"] == "ALI"].sort_values("nome")
+            if not produtos_df.empty else pd.DataFrame()
+        )
+
         for _, receita in receitas.iterrows():
             receita_id = str(receita["receita_id"])
             is_padrao = bool(receita["padrao"])
 
             with st.container(border=True):
-                meta_text = "padrão" if is_padrao else ""
-                card_title(
-                    receita["nome"] or "(sem nome)",
-                    badge=receita_id,
-                    meta=meta_text,
-                    meta_below=True,
-                )
+                # ---- Title row with the "⚙️ Configurar" popover ----
+                title_col, cfg_col = st.columns([5, 1])
+                with title_col:
+                    meta_text = "padrão" if is_padrao else ""
+                    card_title(
+                        receita["nome"] or "(sem nome)",
+                        badge=receita_id,
+                        meta=meta_text,
+                        meta_below=True,
+                    )
+                with cfg_col:
+                    # Spacer to vertically align the popover with the title.
+                    st.markdown(
+                        '<div style="height: 0.4rem;"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    with st.popover("⚙️ Configurar", use_container_width=True):
+                        # Edits to nome + padrao are staged in session_state
+                        # and applied together by the save button below.
+                        # Seed defaults the first time only — afterwards
+                        # Streamlit owns the value via the widget key.
+                        nome_key = f"cfg_nome_{receita_id}"
+                        padrao_key = f"cfg_padrao_{receita_id}"
+                        if nome_key not in st.session_state:
+                            st.session_state[nome_key] = receita["nome"] or ""
+                        if padrao_key not in st.session_state:
+                            st.session_state[padrao_key] = is_padrao
+                        st.text_input("Nome", key=nome_key)
+                        st.checkbox(
+                            "Marcar como padrão",
+                            key=padrao_key,
+                            help=(
+                                "Tamanhos sem receita explícita usam a padrão. "
+                                "Marcar essa desmarca as outras."
+                            ),
+                        )
 
-                # --- Ingredients by componente ---------------------------------
+                # ---- Pre-compute ingredients (with cost columns) ----
                 ing = all_ing[all_ing["receita_id"] == receita_id].copy()
                 if not ing.empty:
-                    # Add live cost columns for display.
                     ing["preco_unit_atual"] = ing["produto_id"].apply(
                         lambda p: data.latest_unit_price(p, compras_df)
                     )
                     ing["custo"] = ing["qtde"] * ing["preco_unit_atual"]
-                    # Prefer the produto's canonical name if available.
                     if not produtos_df.empty:
                         ing = ing.merge(
                             produtos_df[["id", "nome"]].rename(
@@ -350,21 +280,114 @@ with tab_list:
                     else:
                         ing["produto_nome"] = ing["nome"]
 
+                # ---- Two data_editors side by side ----
                 col_calda, col_massa = st.columns([1, 1])
+                # Capture each editor's returned (edited) DataFrame so the
+                # save handler can read the latest values directly.
+                edited_by_comp: dict[str, pd.DataFrame] = {}
+
                 for comp, col in (("calda", col_calda), ("massa", col_massa)):
                     with col:
                         st.markdown(f"**{COMPONENTE_LABEL[comp]}**")
+
                         sub = ing[ing["componente"] == comp]
-                        if sub.empty:
+                        comp_df = _build_component_df(sub, compras_df)
+
+                        # Merge any pending-add rows (staged on previous reruns)
+                        # BEFORE computing the pool — otherwise just-added
+                        # ingredients would still show up as selectable.
+                        pending_key = f"pending_add_{receita_id}_{comp}"
+                        pending_rows = st.session_state.get(pending_key, [])
+                        if pending_rows:
+                            comp_df = pd.concat(
+                                [comp_df, pd.DataFrame(pending_rows)],
+                                ignore_index=True,
+                            )
+
+                        # --- Add ingredient row ---
+                        already_in = set(comp_df["ID"].tolist()) if not comp_df.empty else set()
+                        if not ali_options.empty:
+                            pool = ali_options[~ali_options["id"].isin(already_in)].copy()
+                        else:
+                            pool = pd.DataFrame()
+                        if not pool.empty:
+                            pool["label"] = pool["id"] + " — " + pool["nome"]
+                            add_col_sel, add_col_btn = st.columns([3, 1])
+                            with add_col_sel:
+                                sel_key = f"add_sel_{receita_id}_{comp}"
+                                st.selectbox(
+                                    f"Adicionar ingrediente à {comp}",
+                                    options=[""] + pool["id"].tolist(),
+                                    format_func=lambda x: (
+                                        pool[pool["id"] == x]["label"].iloc[0]
+                                        if x else "— escolha um ingrediente —"
+                                    ),
+                                    key=sel_key,
+                                    label_visibility="collapsed",
+                                )
+                            with add_col_btn:
+                                if st.button(
+                                    "➕ Adicionar",
+                                    key=f"add_btn_{receita_id}_{comp}",
+                                    use_container_width=True,
+                                ):
+                                    pid = st.session_state.get(sel_key, "")
+                                    if pid:
+                                        prod_row = produtos_df[produtos_df["id"] == pid].iloc[0]
+                                        default_unit = (
+                                            (prod_row.get("unidade") or "").strip().upper() or "G"
+                                        )
+                                        # Stage the new ingredient in session_state.
+                                        # It's picked up on the next rerun by
+                                        # being concatenated into comp_df below.
+                                        pending_key = f"pending_add_{receita_id}_{comp}"
+                                        pending = st.session_state.setdefault(pending_key, [])
+                                        if not any(p["ID"] == pid for p in pending):
+                                            pending.append({
+                                                "ID": pid,
+                                                "Nome": prod_row.get("nome") or pid,
+                                                "Qtde": 1.0,
+                                                "Unidade": default_unit,
+                                                "Custo": 1.0 * data.latest_unit_price(pid, compras_df),
+                                                "Remover": False,
+                                            })
+                                        # Reset the selectbox.
+                                        st.session_state[sel_key] = ""
+                                        st.rerun()
+
+                        # --- Render the data_editor ---
+                        editor_key = f"editor_{receita_id}_{comp}"
+
+                        if comp_df.empty:
                             st.caption("_Sem ingredientes nesse componente._")
                             compact_kpi(f"Custo {comp}", brl(0))
-                            continue
-                        disp = sub[["produto_id", "produto_nome", "qtde", "unidade", "custo"]].copy()
-                        disp["qtde"] = disp["qtde"].apply(qty_fmt)
-                        disp["custo"] = disp["custo"].apply(brl)
-                        disp.columns = ["Produto", "Nome", "Qtde", "Unidade", "Custo"]
-                        st.table(disp.set_index("Produto"))
-                        compact_kpi(f"Custo {comp}", brl(sub["custo"].sum()))
+                            # Empty placeholder so the save handler treats this
+                            # component as "no ingredients" cleanly.
+                            edited_by_comp[comp] = comp_df
+                        else:
+                            display_df = _format_custo_column(comp_df)
+                            unit_opts = _unit_options_for(comp_df)
+                            edited_display = st.data_editor(
+                                display_df,
+                                column_config=_column_config(unit_opts),
+                                hide_index=True,
+                                use_container_width=True,
+                                num_rows="fixed",
+                                key=editor_key,
+                            )
+                            # `edited_display` carries the user's inline edits.
+                            # Custo is a display-only string column, so we
+                            # restore the numeric column from comp_df (by ID)
+                            # before the save handler runs.
+                            edited_numeric = edited_display.copy()
+                            edited_numeric["Custo"] = comp_df.set_index("ID")["Custo"].reindex(
+                                edited_numeric["ID"]
+                            ).values
+                            edited_by_comp[comp] = edited_numeric
+                            compact_kpi(
+                                f"Custo {comp}",
+                                brl(float(comp_df["Custo"].sum())),
+                            )
 
                 # Ingredients with no componente (shouldn't normally happen,
                 # but the migration shim leaves them empty pre-apply).
@@ -380,11 +403,98 @@ with tab_list:
                 st.markdown('<div style="height: 0.4rem;"></div>', unsafe_allow_html=True)
                 compact_kpi("Custo total da receita", brl(custo_total))
 
-                # --- Edit ------------------------------------------------------
-                with st.expander("✏️ Editar receita"):
-                    _render_edit_form(receita_id, receita, ing, produtos_df, is_padrao)
+                # --- Save button -----------------------------------------------
+                if st.button(
+                    "💾 Salvar alterações",
+                    key=f"save_{receita_id}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    try:
+                        service = data.get_service()
+                        ssid = data._spreadsheet_id()
 
-                # --- Delete ----------------------------------------------------
+                        # 1. Read staged config (nome + padrao) from the popover.
+                        new_nome = (
+                            st.session_state.get(f"cfg_nome_{receita_id}", receita["nome"] or "")
+                            or ""
+                        ).strip()
+                        new_padrao = bool(
+                            st.session_state.get(f"cfg_padrao_{receita_id}", is_padrao)
+                        )
+                        if not new_nome:
+                            st.error("Dá um nome pra receita.")
+                            st.stop()
+                        if is_padrao and not new_padrao:
+                            st.error(
+                                "Não dá pra desmarcar a padrão sem marcar outra. "
+                                "Abre outra receita e marca-a como padrão primeiro."
+                            )
+                            st.stop()
+
+                        # 2. Apply nome + padrao to the Receitas row.
+                        rn = _find_receita_row_num(receita_id)
+                        service.spreadsheets().values().update(
+                            spreadsheetId=ssid,
+                            range=f"Receitas!B{rn}:C{rn}",
+                            valueInputOption="USER_ENTERED",
+                            body={"values": [[new_nome, bool(new_padrao)]]},
+                        ).execute()
+                        if new_padrao:
+                            _ensure_single_padrao(service, ssid, receita_id)
+
+                        # 3. Build the new ingredient list from each
+                        # data_editor's returned (edited) DataFrame. Rows with
+                        # Remover=True or Qtde<=0 are dropped on save.
+                        new_ing_rows: list[list] = []
+                        for comp in COMPONENTES:
+                            edited = edited_by_comp.get(comp, pd.DataFrame())
+                            if edited.empty:
+                                continue
+                            for _, r in edited.iterrows():
+                                if bool(r.get("Remover")):
+                                    continue
+                                try:
+                                    qtde = float(r.get("Qtde") or 0)
+                                except (TypeError, ValueError):
+                                    qtde = 0.0
+                                if qtde <= 0:
+                                    continue
+                                pid = r["ID"]
+                                unidade = (str(r.get("Unidade") or "").strip().upper())
+                                # Prefer produto's canonical name.
+                                nome_prod = r.get("Nome") or ""
+                                if not produtos_df.empty:
+                                    pr = produtos_df[produtos_df["id"] == pid]
+                                    if not pr.empty:
+                                        nome_prod = pr.iloc[0]["nome"] or nome_prod
+                                new_ing_rows.append(
+                                    [receita_id, pid, nome_prod, qtde, unidade, comp]
+                                )
+
+                        # 4. Rewrite Receita_Ingredientes: keep other receitas,
+                        # replace this one's block.
+                        ing_all = service.spreadsheets().values().get(
+                            spreadsheetId=ssid, range="Receita_Ingredientes!A2:F",
+                            valueRenderOption="UNFORMATTED_VALUE",
+                        ).execute().get("values", [])
+                        kept = [r for r in ing_all if r and (r + [""])[0] != receita_id]
+                        kept.extend(new_ing_rows)
+                        _rewrite_receita_ingredientes(service, ssid, kept)
+
+                        # 5. Clear pending-add staging for this receita.
+                        for comp in COMPONENTES:
+                            st.session_state.pop(f"pending_add_{receita_id}_{comp}", None)
+
+                        data.invalidate_cache()
+                        st.success(f"✅ {receita_id} atualizado!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+
+                # --- Delete (tucked away at the bottom) ------------------------
                 with st.expander("🗑️ Deletar receita"):
                     if is_padrao:
                         st.warning(
