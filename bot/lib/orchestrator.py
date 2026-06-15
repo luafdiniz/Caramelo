@@ -787,16 +787,27 @@ def _ask_item(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
 
 def _get_produto_unidade(item: dict, res: dict) -> str:
     """Return the produto's natural unit (KG, L, UN, etc.), falling back to 'un'."""
+    return _get_produto_info(item, res)[1]
+
+
+def _get_produto_info(item: dict, res: dict) -> tuple[str, str]:
+    """Return (nome, unidade) for the resolved produto. Falls back to receipt
+    descricao for nome and 'un' for unidade so messages stay readable even
+    when nothing is matched yet."""
     pm = item.get("produto_match") or {}
-    if pm.get("unidade"):
-        return pm["unidade"]
+    nome = pm.get("nome", "") or ""
+    unidade = pm.get("unidade", "") or ""
     pid = (res or {}).get("produto_id")
-    if pid:
-        produtos = sheets.get_produtos(_spreadsheet_id())
-        for p in produtos:
+    if pid and (not nome or not unidade):
+        for p in sheets.get_produtos(_spreadsheet_id()):
             if p["id"] == pid:
-                return p.get("unidade") or "un"
-    return "un"
+                nome = nome or (p.get("nome") or "")
+                unidade = unidade or (p.get("unidade") or "")
+                break
+    if not nome:
+        # Fallback: original receipt text (already in payload)
+        nome = item.get("descricao", "") or ""
+    return nome, (unidade or "un")
 
 
 def _ask_pack_size(chat_id: int, state_id: str, payload: dict, idx: int) -> None:
@@ -805,12 +816,12 @@ def _ask_pack_size(chat_id: int, state_id: str, payload: dict, idx: int) -> None
     qtde = float(item.get("qtde_embalagens", 1) or 1)
     preco_total = float(item.get("preco_total", 0) or 0)
     produto_id = res.get("produto_id", "")
-    unidade = _get_produto_unidade(item, res)
+    nome, unidade = _get_produto_info(item, res)
 
     qtde_str = str(int(qtde)) if qtde == int(qtde) else f"{qtde:g}"
     text_lines = [
         f"📦 <b>Quantidade — Item {idx+1}/{len(payload['itens'])}</b>",
-        f"Produto: <b>{_esc(produto_id)}</b> (unidade: <b>{_esc(unidade)}</b>)",
+        f"Produto: <b>{_esc(produto_id)}</b> — {_esc(nome)} (unidade: <b>{_esc(unidade)}</b>)",
         f"Nota mostra: {qtde_str}× — R$ {preco_total:.2f}",
         "",
         f"Quantos <b>{_esc(unidade)}</b> vêm em cada item dessa linha?",
