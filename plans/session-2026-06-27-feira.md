@@ -3,9 +3,17 @@
 Adicionou ao bot do Telegram um **Modo Feira** pra registrar vendas de pudim
 numa feira de rua, por texto, áudio ou imagem, com balanço no final.
 
-Contexto: a Luiza vai vender pudins de 200g a R$18 numa feira e quer ir
-anotando as vendas pelo bot ("vendi 2 pro fulano", "vendi 2 agora", "vendi 2 e
-fulano vai voltar pra pagar"), e no fim fechar o caixa.
+Contexto: a Luiza vai vender pudins de **200g a R$18 e 500g a R$45** numa feira
+(e pode dar uns 500g pra produção/cortesia). Quer ir anotando as vendas pelo bot
+("vendi 2 pro fulano", "vendi 2 de 500g agora", "vendi 2 e fulano vai voltar pra
+pagar"), e no fim fechar o caixa.
+
+> **v2 (mesma sessão):** a 1ª versão assumia UM produto/preço por feira e
+> travou no teste real (ela vende 2 tamanhos). Refeito pra **multi-produto**:
+> vários tamanhos por feira, cada um com qtde e preço; abertura em 2 etapas
+> (qtde primeiro, preço depois → rascunho → aberta); cada venda guarda o
+> tamanho; balanço e reconciliação de estoque por tamanho; botões pra trocar o
+> tamanho de uma venda registrada.
 
 ## Decisões (confirmadas com a Luiza nesta sessão)
 
@@ -47,29 +55,38 @@ fulano vai voltar pra pagar"), e no fim fechar o caixa.
     ajuda.
   - Callbacks da feira roteados antes do orchestrator de compras.
 
-## Esquema das abas (auto-criadas no 1º uso)
+## Esquema das abas (auto-criadas no 1º uso) — v2 multi-produto
 
-`Feiras`: id | data | status | descricao | qtd_levada | preco_unit | chat_id |
-qtd_voltou | dinheiro | pix | data_fechamento | notas
-(status ∈ aberta/fechada/cancelada)
+`Feiras`: id | data | status | descricao | produtos_json | chat_id |
+voltou_json | dinheiro | pix | data_fechamento | notas
+- status ∈ rascunho/aberta/fechada/cancelada
+- produtos_json: `[{"tamanho":"200g","qtd_levada":63,"preco":18.0}, ...]`
+  (qtd e/ou preço podem ser null no rascunho)
+- voltou_json: `{"200g":58,"500g":2}` (no fechamento)
 
-`VendasFeira`: id | feira_id | data | cliente_nome | qtde | preco_unit |
-preco_total | forma_pagamento | status_pagamento | status | notas
+`VendasFeira`: id | feira_id | data | cliente_nome | tamanho | qtde |
+preco_unit | preco_total | forma_pagamento | status_pagamento | status | notas
 (forma ∈ dinheiro/pix/""; status_pagamento ∈ pago/fiado; status ∈ ativa/cancelada)
 
-IDs: `FEIRA-NNN`, `VEN-NNN` (via `sheets._next_id_for_prefix`).
+IDs: `FEIRA-NNN`, `VEN-NNN`. **Cabeçalhos das abas já corrigidos na planilha
+de produção** (a v1 tinha criado com o schema antigo; rodei um one-off com o
+service account pra reescrever os headers; não havia linhas de dados).
 
 ## Fluxo de uso
 
-1. *"tamo saindo pra feira, levando 30 pudins a R$18"* (ou `/feira`) → abre.
-2. Enquanto aberta, tudo (texto/áudio/foto) é venda: *"vendi 2 pro fulano"*,
-   *"vendi 2 agora"*, *"vendi 2, maria vai voltar pra pagar"* (fiado),
-   *"vendi 3 pro joão no pix"*. Cada uma loga na hora + Desfazer.
-3. *"voltaram 5, recebi 200 no dinheiro e 150 no pix"* ou `/fechar` → balanço +
-   botão Encerrar.
+1. *"saindo pra feira, 63 de 200g e 4 de 500g"* → vira **rascunho**, bot pede os
+   preços. *"18 o de 200g e 45 o de 500g"* → feira **aberta**. (Ou tudo numa
+   mensagem só, ou `/feira ...`.)
+2. Enquanto aberta, tudo (texto/áudio/foto) é venda: *"vendi 2 de 200g pro
+   fulano"*, *"vendi 1 de 500g no pix"*, *"vendi 2 agora"* (assume tamanho
+   principal + botões pra trocar), *"vendi 2, maria vai voltar pra pagar"*
+   (fiado). Cada uma loga na hora + Desfazer + ↔️ trocar tamanho.
+3. *"voltaram 58 de 200g e 2 de 500g, recebi 200 no dinheiro e 150 no pix"* ou
+   `/fechar` → balanço por tamanho + caixa + botão Encerrar.
 
 ## Status / testes
-- `test_feira` 23/23, `test_frete_desconto` 25/25, `test_nfe_xml` 32/32 PASS.
+- `test_feira` 31/31 (multi-produto), `test_frete_desconto` 25/25,
+  `test_nfe_xml` 32/32 PASS.
 - Todos os módulos importam limpo (inclusive `webhook.py`).
 - **Parsers do Gemini NÃO testados localmente** — `GEMINI_API_KEY` só existe no
   Vercel. Seguem o mesmo padrão do `parse_receipt_text` (que funciona em prod),

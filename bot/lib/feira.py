@@ -2,31 +2,36 @@
 Modo Feira — registro leve de vendas durante um evento (feira de rua, bazar).
 
 Diferente das Compras (insumos), uma feira é um evento efêmero onde a Luiza
-sai com N pudins e vai vendendo. Cada venda é informal: "vendi 2 pro fulano",
-"vendi 2 agora", "vendi 2, fulano vai voltar pra pagar". O bot registra na hora
-e, no fim, faz o balanço (vendido, voltou, dinheiro × pix, quem ficou fiado).
+sai com pudins de um ou mais tamanhos (ex: 200g a R$18 e 500g a R$45) e vai
+vendendo. Cada venda é informal: "vendi 2 pro fulano", "vendi 2 de 500g agora",
+"vendi 2, fulano vai voltar pra pagar". O bot registra na hora e, no fim, faz o
+balanço (vendido × tamanho, voltou, dinheiro × pix, quem ficou fiado).
 
 Persistência em duas abas da planilha do Caramelo:
 
 - `Feiras` (cabeçalho do evento):
-    A id | B data | C status | D descricao | E qtd_levada | F preco_unit
-    G chat_id | H qtd_voltou | I dinheiro | J pix | K data_fechamento | L notas
-  status ∈ {aberta, fechada, cancelada}
+    A id | B data | C status | D descricao | E produtos_json | F chat_id
+    G voltou_json | H dinheiro | I pix | J data_fechamento | K notas
+  status ∈ {rascunho, aberta, fechada, cancelada}
+  produtos_json: [{"tamanho":"200g","qtd_levada":63,"preco":18.0}, ...]
+                 (qtd_levada e/ou preco podem ser null durante o rascunho)
+  voltou_json:   {"200g": 5, "500g": 1}   (preenchido no fechamento)
 
 - `VendasFeira` (uma linha por venda):
-    A id | B feira_id | C data | D cliente_nome | E qtde | F preco_unit
-    G preco_total | H forma_pagamento | I status_pagamento | J status | K notas
-  forma_pagamento ∈ {dinheiro, pix, ""}  (vazio quando ainda não definido / fiado)
+    A id | B feira_id | C data | D cliente_nome | E tamanho | F qtde
+    G preco_unit | H preco_total | I forma_pagamento | J status_pagamento
+    K status | L notas
+  forma_pagamento ∈ {dinheiro, pix, ""}  (vazio quando fiado / não definido)
   status_pagamento ∈ {pago, fiado}
   status ∈ {ativa, cancelada}   (cancelada = desfeita pelo botão Desfazer)
 
-Este módulo é independente do fluxo de Compras (orchestrator.py). A escolha de
-abas dedicadas (e nome de cliente em texto livre, sem cadastro) é proposital:
-mantém a feira leve e não colide com o plano maior `Tema D` (Clientes/Vendas/
-Preços B2B), que continua valendo pra quando o atacado justificar.
+Abas dedicadas (nome de cliente em texto livre, sem cadastro) são propositais:
+mantêm a feira leve e não colidem com o plano maior `Tema D`.
 """
 
 import os
+import re
+import json
 from datetime import datetime
 
 from . import sheets
@@ -36,17 +41,33 @@ FEIRAS_SHEET = "Feiras"
 VENDAS_SHEET = "VendasFeira"
 
 FEIRAS_HEADER = [
-    "id", "data", "status", "descricao", "qtd_levada", "preco_unit",
-    "chat_id", "qtd_voltou", "dinheiro", "pix", "data_fechamento", "notas",
+    "id", "data", "status", "descricao", "produtos_json", "chat_id",
+    "voltou_json", "dinheiro", "pix", "data_fechamento", "notas",
 ]
 VENDAS_HEADER = [
-    "id", "feira_id", "data", "cliente_nome", "qtde", "preco_unit",
-    "preco_total", "forma_pagamento", "status_pagamento", "status", "notas",
+    "id", "feira_id", "data", "cliente_nome", "tamanho", "qtde",
+    "preco_unit", "preco_total", "forma_pagamento", "status_pagamento",
+    "status", "notas",
 ]
 
 
 def _spreadsheet_id() -> str:
     return os.environ["SPREADSHEET_ID"]
+
+
+def norm_tamanho(s) -> str:
+    """Normalize a size label: '200g'/'de 500'/'1 kg' -> '200g'/'500g'/'1kg'."""
+    s = str(s or "").lower().strip()
+    if not s or s == "padrão":
+        return "padrão"
+    m = re.search(r"(\d+[.,]?\d*)\s*(kg|g)?", s)
+    if m:
+        num = m.group(1).replace(",", ".")
+        if num.endswith(".0"):
+            num = num[:-2]
+        unit = m.group(2) or "g"
+        return f"{num}{unit}"
+    return s
 
 
 # ============================================================================
@@ -71,17 +92,13 @@ def ensure_feira_sheets(spreadsheet_id: str, service=None) -> None:
 
     if FEIRAS_SHEET not in titles:
         service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=f"{FEIRAS_SHEET}!A1",
-            valueInputOption="RAW",
-            body={"values": [FEIRAS_HEADER]},
+            spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!A1",
+            valueInputOption="RAW", body={"values": [FEIRAS_HEADER]},
         ).execute()
     if VENDAS_SHEET not in titles:
         service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=f"{VENDAS_SHEET}!A1",
-            valueInputOption="RAW",
-            body={"values": [VENDAS_HEADER]},
+            spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!A1",
+            valueInputOption="RAW", body={"values": [VENDAS_HEADER]},
         ).execute()
 
 
@@ -91,28 +108,35 @@ def ensure_feira_sheets(spreadsheet_id: str, service=None) -> None:
 
 def _row_to_feira(r: list) -> dict:
     g = lambda i: r[i] if len(r) > i else ""
+    try:
+        produtos = json.loads(g(4)) if g(4) else []
+    except (json.JSONDecodeError, TypeError):
+        produtos = []
+    try:
+        voltou = json.loads(g(6)) if g(6) else {}
+    except (json.JSONDecodeError, TypeError):
+        voltou = {}
     return {
         "id": g(0),
         "data": g(1),
         "status": g(2),
         "descricao": g(3),
-        "qtd_levada": _to_float(g(4)),
-        "preco_unit": _to_float(g(5)),
-        "chat_id": g(6),
-        "qtd_voltou": _to_float(g(7)) if g(7) != "" else None,
-        "dinheiro": _to_float(g(8)) if g(8) != "" else None,
-        "pix": _to_float(g(9)) if g(9) != "" else None,
-        "data_fechamento": g(10),
-        "notas": g(11),
+        "produtos": produtos,
+        "chat_id": g(5),
+        "voltou": voltou,
+        "dinheiro": _to_float(g(7)) if g(7) != "" else None,
+        "pix": _to_float(g(8)) if g(8) != "" else None,
+        "data_fechamento": g(9),
+        "notas": g(10),
     }
 
 
-def get_open_feira(spreadsheet_id: str, chat_id: int, service=None) -> dict | None:
-    """Return the latest feira with status='aberta' for this chat, or None."""
+def get_active_feira(spreadsheet_id: str, chat_id: int, service=None) -> dict | None:
+    """Return the latest feira with status 'aberta' or 'rascunho' for this chat."""
     service = service or sheets.get_service()
     ensure_feira_sheets(spreadsheet_id, service=service)
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!A2:L"
+        spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!A2:K"
     ).execute()
     rows = result.get("values", [])
     chat_str = str(chat_id)
@@ -120,7 +144,7 @@ def get_open_feira(spreadsheet_id: str, chat_id: int, service=None) -> dict | No
         if not r or not r[0]:
             continue
         f = _row_to_feira(r)
-        if f["status"] == "aberta" and (f["chat_id"] == chat_str or f["chat_id"] == ""):
+        if f["status"] in ("aberta", "rascunho") and (f["chat_id"] == chat_str or f["chat_id"] == ""):
             return f
     return None
 
@@ -137,134 +161,152 @@ def _feira_row_number(spreadsheet_id: str, feira_id: str, service=None) -> int |
     return None
 
 
-def open_feira(
+def create_feira(
     spreadsheet_id: str,
     chat_id: int,
-    qtd_levada: float,
-    preco_unit: float,
+    produtos: list,
+    status: str = "aberta",
     descricao: str = "",
     data: str = "",
     service=None,
 ) -> str:
-    """Append a new open feira. Returns the FEIRA-NNN id."""
+    """Append a new feira (status 'aberta' or 'rascunho'). Returns FEIRA-NNN."""
     service = service or sheets.get_service()
     ensure_feira_sheets(spreadsheet_id, service=service)
     new_id = sheets._next_id_for_prefix(spreadsheet_id, f"{FEIRAS_SHEET}!A:A", "FEIRA", service=service)
     data = data or datetime.now().strftime("%Y-%m-%d")
-
     service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
-        range=f"{FEIRAS_SHEET}!A:L",
+        range=f"{FEIRAS_SHEET}!A:K",
         valueInputOption="USER_ENTERED",
         body={"values": [[
-            new_id, data, "aberta", descricao or "",
-            qtd_levada, preco_unit, str(chat_id),
+            new_id, data, status, descricao or "",
+            json.dumps(produtos, ensure_ascii=False), str(chat_id),
             "", "", "", "", "",
         ]]},
     ).execute()
     return new_id
 
 
-def close_feira(
-    spreadsheet_id: str,
-    feira_id: str,
-    qtd_voltou=None,
-    dinheiro=None,
-    pix=None,
-    service=None,
-) -> None:
-    """Mark a feira fechada and write the closing counts."""
+def update_feira_produtos(spreadsheet_id: str, feira_id: str, produtos: list,
+                          status: str | None = None, service=None) -> None:
+    """Rewrite the produtos_json (E) and optionally the status (C)."""
     service = service or sheets.get_service()
     row = _feira_row_number(spreadsheet_id, feira_id, service=service)
     if not row:
         raise ValueError(f"Feira {feira_id} não encontrada.")
-    data_fech = datetime.now().strftime("%Y-%m-%d")
-    # C=status, H=qtd_voltou, I=dinheiro, J=pix, K=data_fechamento
     service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range=f"{FEIRAS_SHEET}!C{row}",
+        spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!E{row}",
         valueInputOption="USER_ENTERED",
-        body={"values": [["fechada"]]},
+        body={"values": [[json.dumps(produtos, ensure_ascii=False)]]},
     ).execute()
-    service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range=f"{FEIRAS_SHEET}!H{row}:K{row}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [[
-            "" if qtd_voltou is None else qtd_voltou,
-            "" if dinheiro is None else dinheiro,
-            "" if pix is None else pix,
-            data_fech,
-        ]]},
-    ).execute()
+    if status is not None:
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!C{row}",
+            valueInputOption="USER_ENTERED", body={"values": [[status]]},
+        ).execute()
 
 
-def update_closing(
-    spreadsheet_id: str,
-    feira_id: str,
-    qtd_voltou=None,
-    dinheiro=None,
-    pix=None,
-    service=None,
-) -> None:
-    """Write only the provided closing fields (H/I/J) without closing the feira.
+def update_closing(spreadsheet_id: str, feira_id: str, voltou: dict | None = None,
+                   dinheiro=None, pix=None, service=None) -> None:
+    """Write provided closing fields (G/H/I) without closing the feira.
 
-    Lets the user inform the balance in pieces ("voltaram 5" then "recebi 200
-    no dinheiro"). None means "leave as is".
+    `voltou` is merged into the existing voltou_json so the user can inform it in
+    pieces. None means "leave as is".
     """
     service = service or sheets.get_service()
     row = _feira_row_number(spreadsheet_id, feira_id, service=service)
     if not row:
         raise ValueError(f"Feira {feira_id} não encontrada.")
-    updates = []
-    if qtd_voltou is not None:
-        updates.append((f"{FEIRAS_SHEET}!H{row}", qtd_voltou))
-    if dinheiro is not None:
-        updates.append((f"{FEIRAS_SHEET}!I{row}", dinheiro))
-    if pix is not None:
-        updates.append((f"{FEIRAS_SHEET}!J{row}", pix))
-    for rng, val in updates:
+    if voltou:
+        # merge with existing
+        cur = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!G{row}"
+        ).execute().get("values", [[""]])
+        existing = {}
+        if cur and cur[0] and cur[0][0]:
+            try:
+                existing = json.loads(cur[0][0])
+            except json.JSONDecodeError:
+                existing = {}
+        existing.update({norm_tamanho(k): v for k, v in voltou.items()})
         service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=rng,
+            spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!G{row}",
             valueInputOption="USER_ENTERED",
-            body={"values": [[val]]},
+            body={"values": [[json.dumps(existing, ensure_ascii=False)]]},
+        ).execute()
+    if dinheiro is not None:
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!H{row}",
+            valueInputOption="USER_ENTERED", body={"values": [[dinheiro]]},
+        ).execute()
+    if pix is not None:
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!I{row}",
+            valueInputOption="USER_ENTERED", body={"values": [[pix]]},
         ).execute()
 
 
 def finalize_feira(spreadsheet_id: str, feira_id: str, service=None) -> None:
-    """Mark a feira fechada and stamp the closing date (closing counts already set)."""
+    """Mark a feira fechada and stamp the closing date."""
     service = service or sheets.get_service()
     row = _feira_row_number(spreadsheet_id, feira_id, service=service)
     if not row:
         raise ValueError(f"Feira {feira_id} não encontrada.")
     data_fech = datetime.now().strftime("%Y-%m-%d")
     service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range=f"{FEIRAS_SHEET}!C{row}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [["fechada"]]},
+        spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!C{row}",
+        valueInputOption="USER_ENTERED", body={"values": [["fechada"]]},
     ).execute()
     service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range=f"{FEIRAS_SHEET}!K{row}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [[data_fech]]},
+        spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!J{row}",
+        valueInputOption="USER_ENTERED", body={"values": [[data_fech]]},
     ).execute()
 
 
 def cancel_feira(spreadsheet_id: str, feira_id: str, service=None) -> None:
-    """Mark a feira cancelada (used by /cancel when a feira is the active flow)."""
+    """Mark a feira cancelada."""
     service = service or sheets.get_service()
     row = _feira_row_number(spreadsheet_id, feira_id, service=service)
     if not row:
         return
     service.spreadsheets().values().update(
-        spreadsheetId=spreadsheet_id,
-        range=f"{FEIRAS_SHEET}!C{row}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [["cancelada"]]},
+        spreadsheetId=spreadsheet_id, range=f"{FEIRAS_SHEET}!C{row}",
+        valueInputOption="USER_ENTERED", body={"values": [["cancelada"]]},
     ).execute()
+
+
+# ============================================================================
+# Produtos helpers (operate on the in-memory produtos list)
+# ============================================================================
+
+def produtos_completos(produtos: list) -> bool:
+    """True if every product has both a qty and a price set."""
+    if not produtos:
+        return False
+    return all(p.get("qtd_levada") not in (None, "") and p.get("preco") not in (None, "")
+               for p in produtos)
+
+def produtos_missing_preco(produtos: list) -> list:
+    return [p for p in produtos if p.get("preco") in (None, "")]
+
+
+def find_produto(produtos: list, tamanho: str) -> dict | None:
+    """Match a size to a product by normalized tamanho."""
+    if not produtos:
+        return None
+    nt = norm_tamanho(tamanho)
+    for p in produtos:
+        if norm_tamanho(p.get("tamanho")) == nt:
+            return p
+    return None
+
+
+def produto_principal(produtos: list) -> dict | None:
+    """The product with the largest qty taken (the main line), as the default."""
+    if not produtos:
+        return None
+    return max(produtos, key=lambda p: float(p.get("qtd_levada") or 0))
 
 
 # ============================================================================
@@ -274,78 +316,87 @@ def cancel_feira(spreadsheet_id: str, feira_id: str, service=None) -> None:
 def _row_to_venda(r: list) -> dict:
     g = lambda i: r[i] if len(r) > i else ""
     return {
-        "id": g(0),
-        "feira_id": g(1),
-        "data": g(2),
-        "cliente_nome": g(3),
-        "qtde": _to_float(g(4)),
-        "preco_unit": _to_float(g(5)),
-        "preco_total": _to_float(g(6)),
-        "forma_pagamento": g(7),
-        "status_pagamento": g(8),
-        "status": g(9),
-        "notas": g(10),
+        "id": g(0), "feira_id": g(1), "data": g(2), "cliente_nome": g(3),
+        "tamanho": g(4), "qtde": _to_float(g(5)), "preco_unit": _to_float(g(6)),
+        "preco_total": _to_float(g(7)), "forma_pagamento": g(8),
+        "status_pagamento": g(9), "status": g(10), "notas": g(11),
     }
 
 
-def append_venda(
-    spreadsheet_id: str,
-    feira_id: str,
-    qtde: float,
-    preco_unit: float,
-    cliente_nome: str = "",
-    forma_pagamento: str = "",
-    status_pagamento: str = "pago",
-    notas: str = "",
-    service=None,
-) -> tuple[str, dict]:
+def append_venda(spreadsheet_id: str, feira_id: str, qtde: float, preco_unit: float,
+                 tamanho: str = "", cliente_nome: str = "", forma_pagamento: str = "",
+                 status_pagamento: str = "pago", notas: str = "", service=None) -> tuple[str, dict]:
     """Append a sale row. Returns (VEN-NNN id, venda dict)."""
     service = service or sheets.get_service()
     ensure_feira_sheets(spreadsheet_id, service=service)
     new_id = sheets._next_id_for_prefix(spreadsheet_id, f"{VENDAS_SHEET}!A:A", "VEN", service=service)
     data = datetime.now().strftime("%Y-%m-%d")
     preco_total = round(float(qtde) * float(preco_unit), 2)
-
     row = [
-        new_id, feira_id, data, cliente_nome or "",
+        new_id, feira_id, data, cliente_nome or "", tamanho or "",
         qtde, preco_unit, preco_total,
         forma_pagamento or "", status_pagamento or "pago", "ativa", notas or "",
     ]
     service.spreadsheets().values().append(
-        spreadsheetId=spreadsheet_id,
-        range=f"{VENDAS_SHEET}!A:K",
-        valueInputOption="USER_ENTERED",
-        body={"values": [row]},
+        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!A:L",
+        valueInputOption="USER_ENTERED", body={"values": [row]},
     ).execute()
     return new_id, _row_to_venda(row)
+
+
+def _venda_row_number(spreadsheet_id: str, venda_id: str, service=None):
+    service = service or sheets.get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!A:L"
+    ).execute()
+    rows = result.get("values", [])
+    for i, r in enumerate(rows):
+        if r and r[0] == venda_id:
+            return i + 1, _row_to_venda(r)
+    return None, None
 
 
 def cancel_venda(spreadsheet_id: str, venda_id: str, service=None) -> bool:
     """Soft-cancel a venda (Desfazer button). Returns True if it acted."""
     service = service or sheets.get_service()
-    result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!A:K"
+    row, v = _venda_row_number(spreadsheet_id, venda_id, service=service)
+    if not row or (v and v["status"] == "cancelada"):
+        return False
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!K{row}",
+        valueInputOption="RAW", body={"values": [["cancelada"]]},
     ).execute()
-    rows = result.get("values", [])
-    for i, r in enumerate(rows):
-        if r and r[0] == venda_id:
-            if len(r) > 9 and r[9] == "cancelada":
-                return False  # already cancelled
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=f"{VENDAS_SHEET}!J{i + 1}",
-                valueInputOption="RAW",
-                body={"values": [["cancelada"]]},
-            ).execute()
-            return True
-    return False
+    return True
+
+
+def move_venda(spreadsheet_id: str, venda_id: str, tamanho: str, preco_unit: float,
+               service=None) -> dict | None:
+    """Change a venda's size + unit price (and recompute total). Returns updated dict."""
+    service = service or sheets.get_service()
+    row, v = _venda_row_number(spreadsheet_id, venda_id, service=service)
+    if not row or not v:
+        return None
+    preco_total = round(v["qtde"] * float(preco_unit), 2)
+    # E=tamanho, F=qtde, G=preco_unit, H=preco_total
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!E{row}",
+        valueInputOption="USER_ENTERED", body={"values": [[tamanho]]},
+    ).execute()
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!G{row}:H{row}",
+        valueInputOption="USER_ENTERED", body={"values": [[preco_unit, preco_total]]},
+    ).execute()
+    v["tamanho"] = tamanho
+    v["preco_unit"] = float(preco_unit)
+    v["preco_total"] = preco_total
+    return v
 
 
 def get_vendas(spreadsheet_id: str, feira_id: str, service=None, include_cancelled=False) -> list[dict]:
     """Return all sale rows for a feira (active only by default)."""
     service = service or sheets.get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!A2:K"
+        spreadsheetId=spreadsheet_id, range=f"{VENDAS_SHEET}!A2:L"
     ).execute()
     rows = result.get("values", [])
     out = []
@@ -366,40 +417,58 @@ def get_vendas(spreadsheet_id: str, feira_id: str, service=None, include_cancell
 # ============================================================================
 
 def compute_balanco(feira: dict, vendas: list[dict]) -> dict:
-    """
-    Aggregate a feira's active sales into a closing balance.
+    """Aggregate a feira's active sales into a closing balance (per size + cash)."""
+    produtos = feira.get("produtos") or []
+    voltou = feira.get("voltou") or {}
 
-    Returns a dict with:
-      - qtde_vendida, faturado_total
-      - dinheiro, pix, fiado (somas por forma/status de pagamento, calculados)
-      - pago_total (dinheiro + pix + outros pagos sem forma definida)
-      - fiados: lista de {nome, valor} ainda em aberto
-      - qtd_levada, qtd_voltou, qtd_nao_contabilizada (levada - vendida - voltou)
-      - recebido_informado (dinheiro+pix do fechamento), divergencia_caixa
-    """
+    # Per-product breakdown
+    prod_rows = []
+    # start from declared produtos; also include any size that only appears in vendas
+    tamanhos = []
+    for p in produtos:
+        tamanhos.append(norm_tamanho(p.get("tamanho")))
+    for v in vendas:
+        nt = norm_tamanho(v["tamanho"]) if v["tamanho"] else "padrão"
+        if nt not in tamanhos:
+            tamanhos.append(nt)
+
+    for nt in tamanhos:
+        p = find_produto(produtos, nt) or {}
+        vend = [v for v in vendas if (norm_tamanho(v["tamanho"]) if v["tamanho"] else "padrão") == nt]
+        vendido = sum(v["qtde"] for v in vend)
+        faturado = round(sum(v["preco_total"] for v in vend), 2)
+        qtd_levada = p.get("qtd_levada")
+        qtd_levada = float(qtd_levada) if qtd_levada not in (None, "") else None
+        volt = voltou.get(nt)
+        volt = float(volt) if volt not in (None, "") else None
+        nao_contab = None
+        if qtd_levada is not None and volt is not None:
+            nao_contab = round(qtd_levada - vendido - volt, 2)
+        prod_rows.append({
+            "tamanho": nt,
+            "preco": (float(p["preco"]) if p.get("preco") not in (None, "") else None),
+            "qtd_levada": qtd_levada,
+            "vendido": vendido,
+            "voltou": volt,
+            "nao_contabilizada": nao_contab,
+            "faturado": faturado,
+        })
+
     qtde_vendida = sum(v["qtde"] for v in vendas)
     faturado_total = round(sum(v["preco_total"] for v in vendas), 2)
-
     dinheiro = round(sum(v["preco_total"] for v in vendas
                          if v["status_pagamento"] == "pago" and v["forma_pagamento"] == "dinheiro"), 2)
     pix = round(sum(v["preco_total"] for v in vendas
                     if v["status_pagamento"] == "pago" and v["forma_pagamento"] == "pix"), 2)
     pago_sem_forma = round(sum(v["preco_total"] for v in vendas
                               if v["status_pagamento"] == "pago" and v["forma_pagamento"] not in ("dinheiro", "pix")), 2)
-    fiado_total = round(sum(v["preco_total"] for v in vendas
-                           if v["status_pagamento"] == "fiado"), 2)
+    fiado_total = round(sum(v["preco_total"] for v in vendas if v["status_pagamento"] == "fiado"), 2)
     pago_total = round(dinheiro + pix + pago_sem_forma, 2)
-
     fiados = [
-        {"nome": v["cliente_nome"] or "(sem nome)", "valor": v["preco_total"], "qtde": v["qtde"]}
+        {"nome": v["cliente_nome"] or "(sem nome)", "valor": v["preco_total"],
+         "qtde": v["qtde"], "tamanho": v["tamanho"]}
         for v in vendas if v["status_pagamento"] == "fiado"
     ]
-
-    qtd_levada = feira.get("qtd_levada") or 0
-    qtd_voltou = feira.get("qtd_voltou")
-    qtd_nao_contabilizada = None
-    if qtd_levada and qtd_voltou is not None:
-        qtd_nao_contabilizada = round(qtd_levada - qtde_vendida - qtd_voltou, 2)
 
     recebido_informado = None
     divergencia_caixa = None
@@ -410,6 +479,7 @@ def compute_balanco(feira: dict, vendas: list[dict]) -> dict:
         divergencia_caixa = round(recebido_informado - pago_total, 2)
 
     return {
+        "produtos": prod_rows,
         "qtde_vendida": qtde_vendida,
         "faturado_total": faturado_total,
         "dinheiro": dinheiro,
@@ -419,9 +489,6 @@ def compute_balanco(feira: dict, vendas: list[dict]) -> dict:
         "fiado_total": fiado_total,
         "fiados": fiados,
         "n_vendas": len(vendas),
-        "qtd_levada": qtd_levada,
-        "qtd_voltou": qtd_voltou,
-        "qtd_nao_contabilizada": qtd_nao_contabilizada,
         "recebido_informado": recebido_informado,
         "divergencia_caixa": divergencia_caixa,
     }
@@ -437,7 +504,6 @@ def _to_float(v) -> float:
     if isinstance(v, (int, float)):
         return float(v)
     s = str(v).strip().replace("R$", "").replace(" ", "")
-    # pt-BR: "1.234,56" -> "1234.56"; also handle "36,00" and "36.00"
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".")
     elif "," in s:

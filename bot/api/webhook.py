@@ -218,7 +218,7 @@ def _process_update(update: dict) -> None:
             parts = (cb["data"] or "").split(":")
             # Feira buttons (vundo / vfecha / vcont) are owned by feira_flow;
             # everything else goes to the compra orchestrator.
-            if parts and parts[0] in ("vundo", "vfecha", "vcont"):
+            if parts and parts[0] in ("vundo", "vfecha", "vcont", "vmove"):
                 feira_flow.handle_callback(
                     chat_id=chat_id,
                     message_id=cb["message"]["message_id"],

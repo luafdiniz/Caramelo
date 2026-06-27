@@ -286,29 +286,39 @@ def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg", api_key: 
 
 
 FEIRA_OPENING_PROMPT = """Você interpreta uma mensagem da dona de um negócio de pudim que está SAINDO para vender numa feira/bazar.
+Ela pode vender MAIS DE UM tamanho de pudim (ex: 200g e 500g), cada um com preço próprio.
 
-Exemplos de mensagens:
-- "tamo saindo pra feira, levando 30 pudins pra vender a 18 reais"
-- "feira agora, 40 pudins de 200g a R$18"
-- "vou pra feira com 25 pudins"
+Exemplos:
+- "tamo saindo pra feira, levando 30 pudins de 200g a R$18"
+  -> 1 produto: 200g, qtd 30, preço 18
+- "levando 63 de 200g e 4 de 500g"
+  -> 2 produtos sem preço ainda: 200g qtd 63 preço null; 500g qtd 4 preço null
+- "18 o de 200g e 45 o de 500g"
+  -> 2 produtos só com preço: 200g preço 18; 500g preço 45
 
 Retorne APENAS um JSON válido:
 
 {
   "is_abertura": true,
-  "qtd_levada": 30,          // quantos pudins ela está levando (número), ou null se não disse
-  "preco_unit": 18.00,       // preço de venda por pudim em reais, ou null se não disse
-  "descricao": "Feira ..."   // descrição curta do evento se houver (local/nome), senão ""
+  "produtos": [
+    {"tamanho": "200g", "qtd_levada": 63, "preco": 18.00},   // qtd_levada e/ou preco podem ser null
+    {"tamanho": "500g", "qtd_levada": 4, "preco": 45.00}
+  ],
+  "descricao": "Feira ..."   // local/nome do evento se houver, senão ""
 }
 
 Regras:
+- "tamanho": normalize pra número + unidade, ex "200g", "500g", "1kg". Se ela não falar tamanho, use "padrão".
 - Use ponto decimal. "18 reais"/"R$18"/"dezoito" -> 18.00.
-- Se a mensagem NÃO for sobre sair pra vender numa feira, retorne {"is_abertura": false, "qtd_levada": null, "preco_unit": null, "descricao": ""}.
+- qtd_levada = quantos pudins daquele tamanho ela está levando. preco = preço de venda unitário.
+- Inclua um produto mesmo que só tenha a qtde (preco null) ou só o preço (qtd_levada null).
+- Ignore comentários como "talvez dou pra produção" — não viram produto.
+- Se a mensagem NÃO for sobre sair pra vender numa feira, retorne {"is_abertura": false, "produtos": [], "descricao": ""}.
 """
 
 
 def parse_feira_opening(text: str, api_key: Optional[str] = None) -> dict:
-    """Interpret a 'saindo pra feira' message. See FEIRA_OPENING_PROMPT for shape."""
+    """Interpret a 'saindo pra feira' message (multi-product). See FEIRA_OPENING_PROMPT."""
     client = _client(api_key)
     prompt = f'{FEIRA_OPENING_PROMPT}\n\nMensagem:\n"""\n{text}\n"""'
     response = client.models.generate_content(
@@ -322,42 +332,63 @@ def parse_feira_opening(text: str, api_key: Optional[str] = None) -> dict:
 FEIRA_MESSAGE_PROMPT = """Você ajuda a dona de um negócio de pudim a gerenciar uma feira que JÁ ESTÁ ABERTA.
 Ela vai te mandando recados informais (texto, áudio transcrito, ou descrição de imagem) e você classifica e extrai os dados.
 
-O preço padrão por pudim nesta feira é R$ {preco_default}.
+Tamanhos de pudim à venda nesta feira (com preço unitário):
+{produtos_str}
 
 Classifique a mensagem em um destes "intent":
-- "venda": ela registrou uma venda. Ex: "vendi 2 pro fulano", "vendi 2 agora", "vendi 3 pra dona maria no pix", "vendi 2, o joão vai voltar pra pagar".
-- "fechamento": ela está fechando/encerrando a feira ou informando o balanço final. Ex: "voltaram 5 pudins", "recebi 200 em dinheiro e 150 no pix", "acabou a feira, sobraram 4", "fim de feira".
-- "status": ela quer saber o resumo parcial. Ex: "como tá o balanço?", "quanto já vendi?".
-- "outro": qualquer outra coisa (saudação, dúvida, mensagem que não encaixa).
+- "venda": ela registrou uma venda. Ex: "vendi 2 pro fulano", "vendi 2 de 500g agora", "vendi 3 pra dona maria no pix", "vendi 2, o joão vai voltar pra pagar".
+- "fechamento": ela está encerrando/fechando ou informando o balanço final. Ex: "voltaram 5 de 200g e 1 de 500g", "recebi 200 em dinheiro e 150 no pix", "acabou a feira, sobraram 4", "fim de feira".
+- "status": ela quer o resumo parcial. Ex: "como tá o balanço?", "quanto já vendi?".
+- "outro": qualquer outra coisa.
 
-Retorne APENAS um JSON válido com este formato:
+Retorne APENAS um JSON válido:
 
 {
   "intent": "venda" | "fechamento" | "status" | "outro",
   "qtde": 2,                       // (venda) número de pudins vendidos; null se não disser
+  "tamanho": "200g",               // (venda) tamanho vendido se ela disser ("200g","500g"...); "" se não disse
   "cliente_nome": "Fulano",        // (venda) nome do cliente; "" se anônimo ("vendi 2 agora")
   "pago": true,                    // (venda) false se ficou fiado / "vai pagar depois" / "deve"
   "forma_pagamento": "dinheiro",   // (venda) "dinheiro" | "pix" | "" se não disse
-  "preco_unit": null,              // (venda) preço unitário SÓ se ela disse um valor diferente; senão null (usa o padrão)
+  "preco_unit": null,              // (venda) preço unitário SÓ se ela disser um valor diferente; senão null
   "notas": "",                     // (venda) observação curta, se houver
-  "qtd_voltou": null,              // (fechamento) quantos pudins voltaram/sobraram; null se não disse
+  "voltou": [                      // (fechamento) pudins que voltaram, por tamanho; [] se não disse
+    {"tamanho": "200g", "qtde": 5},
+    {"tamanho": "500g", "qtde": 1}
+  ],
   "dinheiro": null,                // (fechamento) total recebido em dinheiro; null se não disse
   "pix": null                      // (fechamento) total recebido no pix; null se não disse
 }
 
 Regras:
+- "tamanho": normalize pra "200g","500g","1kg". Se ela não falar tamanho numa venda, deixe "".
 - Use ponto decimal nos números.
-- "pix"/"piques"/"transferência" -> forma_pagamento "pix". "dinheiro"/"em espécie"/"cash" -> "dinheiro".
+- "pix"/"piques"/"transferência" -> "pix". "dinheiro"/"em espécie"/"cash" -> "dinheiro".
 - "fiado"/"vai voltar pra pagar"/"paga depois"/"anota aí"/"deve" -> pago=false (e forma_pagamento "").
 - Se for venda mas não disser forma de pagamento, deixe forma_pagamento "" e pago=true.
-- Campos não aplicáveis ao intent: deixe null (ou "" para textos).
+- Campos não aplicáveis ao intent: deixe null/""/[] conforme o tipo.
 """
 
 
-def parse_feira_message(text: str, preco_default: float, api_key: Optional[str] = None) -> dict:
-    """Classify + extract a message sent during an open feira (text/transcript)."""
+def _produtos_str(produtos: list) -> str:
+    if not produtos:
+        return "- (tamanho único, preço padrão)"
+    out = []
+    for p in produtos:
+        preco = p.get("preco")
+        preco_s = f"R$ {float(preco):.2f}" if preco else "preço não definido"
+        out.append(f"- {p.get('tamanho', 'padrão')}: {preco_s}")
+    return "\n".join(out)
+
+
+def parse_feira_message(text: str, produtos: list, api_key: Optional[str] = None) -> dict:
+    """Classify + extract a message sent during an open feira (text/transcript).
+
+    `produtos` is the feira's product list (each {tamanho, preco, ...}) so the
+    model knows the available sizes and prices.
+    """
     client = _client(api_key)
-    prompt = FEIRA_MESSAGE_PROMPT.format(preco_default=f"{preco_default:.2f}")
+    prompt = FEIRA_MESSAGE_PROMPT.format(produtos_str=_produtos_str(produtos))
     prompt += f'\n\nMensagem:\n"""\n{text}\n"""'
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -367,16 +398,13 @@ def parse_feira_message(text: str, preco_default: float, api_key: Optional[str] 
     return _parse_json(response.text)
 
 
-def parse_feira_image(image_bytes: bytes, preco_default: float, mime_type: Optional[str] = None,
+def parse_feira_image(image_bytes: bytes, produtos: list, mime_type: Optional[str] = None,
                       api_key: Optional[str] = None) -> dict:
-    """
-    Interpret an image sent during an open feira (e.g. a handwritten tally, or a
-    pix receipt screenshot). Returns the same shape as parse_feira_message.
-    """
+    """Interpret an image sent during an open feira. Same shape as parse_feira_message."""
     client = _client(api_key)
     if mime_type is None:
         mime_type = _sniff_mime(image_bytes)
-    prompt = FEIRA_MESSAGE_PROMPT.format(preco_default=f"{preco_default:.2f}")
+    prompt = FEIRA_MESSAGE_PROMPT.format(produtos_str=_produtos_str(produtos))
     prompt += "\n\nA mensagem é uma IMAGEM (anotação à mão, recado, ou comprovante de pix). Extraia os dados dela."
     response = client.models.generate_content(
         model="gemini-2.5-flash",
