@@ -33,6 +33,10 @@ For the latest session handoff including pending TODOs and gotchas, see `plans/s
 4. **Batch Management & Cash Flow** ✅ — basic done, registro de fornadas no app
 5. **Bot Integration (Telegram)** ✅ — receipt photo → Gemini Vision → Sheets, with alias learning
 6. **Web Dashboard (Streamlit)** ✅ — full CRUD with brand styling
+7. **Modo Feira (bot)** ✅ — sales tracking at street fairs via text/audio/image.
+   New tabs `Feiras` + `VendasFeira` (auto-created). See `plans/session-2026-06-27-feira.md`.
+   This is the lightweight event channel; the full B2B `Tema D`
+   (Clientes/Vendas/Preços) in `plans/tema-d-clientes-vendas-b2b.md` is still pending.
 
 ## Architecture
 

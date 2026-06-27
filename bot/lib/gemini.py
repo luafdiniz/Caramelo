@@ -244,3 +244,146 @@ def parse_receipt_text(text: str, api_key: Optional[str] = None, today: Optional
         return json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw[:500]}")
+
+
+# ============================================================================
+# Modo Feira — áudio, abertura, venda e fechamento
+# ============================================================================
+
+def _client(api_key: Optional[str] = None) -> "genai.Client":
+    api_key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not configured")
+    return genai.Client(api_key=api_key)
+
+
+def _parse_json(raw: str) -> dict:
+    raw = re.sub(r"^```(?:json)?\s*", "", (raw or "").strip())
+    raw = re.sub(r"\s*```$", "", raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw[:500]}")
+
+
+def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg", api_key: Optional[str] = None) -> str:
+    """
+    Transcribe a voice message (Telegram voice = OGG/Opus) to plain text.
+
+    Returns the transcription string. Raises RuntimeError if no API key.
+    """
+    client = _client(api_key)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Part.from_bytes(data=audio_bytes, mime_type=mime_type or "audio/ogg"),
+            "Transcreva este áudio em português do Brasil. Responda APENAS com o texto "
+            "transcrito, sem comentários, sem aspas, sem rótulos.",
+        ],
+        config=types.GenerateContentConfig(temperature=0.0),
+    )
+    return (response.text or "").strip()
+
+
+FEIRA_OPENING_PROMPT = """Você interpreta uma mensagem da dona de um negócio de pudim que está SAINDO para vender numa feira/bazar.
+
+Exemplos de mensagens:
+- "tamo saindo pra feira, levando 30 pudins pra vender a 18 reais"
+- "feira agora, 40 pudins de 200g a R$18"
+- "vou pra feira com 25 pudins"
+
+Retorne APENAS um JSON válido:
+
+{
+  "is_abertura": true,
+  "qtd_levada": 30,          // quantos pudins ela está levando (número), ou null se não disse
+  "preco_unit": 18.00,       // preço de venda por pudim em reais, ou null se não disse
+  "descricao": "Feira ..."   // descrição curta do evento se houver (local/nome), senão ""
+}
+
+Regras:
+- Use ponto decimal. "18 reais"/"R$18"/"dezoito" -> 18.00.
+- Se a mensagem NÃO for sobre sair pra vender numa feira, retorne {"is_abertura": false, "qtd_levada": null, "preco_unit": null, "descricao": ""}.
+"""
+
+
+def parse_feira_opening(text: str, api_key: Optional[str] = None) -> dict:
+    """Interpret a 'saindo pra feira' message. See FEIRA_OPENING_PROMPT for shape."""
+    client = _client(api_key)
+    prompt = f'{FEIRA_OPENING_PROMPT}\n\nMensagem:\n"""\n{text}\n"""'
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+        config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
+    )
+    return _parse_json(response.text)
+
+
+FEIRA_MESSAGE_PROMPT = """Você ajuda a dona de um negócio de pudim a gerenciar uma feira que JÁ ESTÁ ABERTA.
+Ela vai te mandando recados informais (texto, áudio transcrito, ou descrição de imagem) e você classifica e extrai os dados.
+
+O preço padrão por pudim nesta feira é R$ {preco_default}.
+
+Classifique a mensagem em um destes "intent":
+- "venda": ela registrou uma venda. Ex: "vendi 2 pro fulano", "vendi 2 agora", "vendi 3 pra dona maria no pix", "vendi 2, o joão vai voltar pra pagar".
+- "fechamento": ela está fechando/encerrando a feira ou informando o balanço final. Ex: "voltaram 5 pudins", "recebi 200 em dinheiro e 150 no pix", "acabou a feira, sobraram 4", "fim de feira".
+- "status": ela quer saber o resumo parcial. Ex: "como tá o balanço?", "quanto já vendi?".
+- "outro": qualquer outra coisa (saudação, dúvida, mensagem que não encaixa).
+
+Retorne APENAS um JSON válido com este formato:
+
+{
+  "intent": "venda" | "fechamento" | "status" | "outro",
+  "qtde": 2,                       // (venda) número de pudins vendidos; null se não disser
+  "cliente_nome": "Fulano",        // (venda) nome do cliente; "" se anônimo ("vendi 2 agora")
+  "pago": true,                    // (venda) false se ficou fiado / "vai pagar depois" / "deve"
+  "forma_pagamento": "dinheiro",   // (venda) "dinheiro" | "pix" | "" se não disse
+  "preco_unit": null,              // (venda) preço unitário SÓ se ela disse um valor diferente; senão null (usa o padrão)
+  "notas": "",                     // (venda) observação curta, se houver
+  "qtd_voltou": null,              // (fechamento) quantos pudins voltaram/sobraram; null se não disse
+  "dinheiro": null,                // (fechamento) total recebido em dinheiro; null se não disse
+  "pix": null                      // (fechamento) total recebido no pix; null se não disse
+}
+
+Regras:
+- Use ponto decimal nos números.
+- "pix"/"piques"/"transferência" -> forma_pagamento "pix". "dinheiro"/"em espécie"/"cash" -> "dinheiro".
+- "fiado"/"vai voltar pra pagar"/"paga depois"/"anota aí"/"deve" -> pago=false (e forma_pagamento "").
+- Se for venda mas não disser forma de pagamento, deixe forma_pagamento "" e pago=true.
+- Campos não aplicáveis ao intent: deixe null (ou "" para textos).
+"""
+
+
+def parse_feira_message(text: str, preco_default: float, api_key: Optional[str] = None) -> dict:
+    """Classify + extract a message sent during an open feira (text/transcript)."""
+    client = _client(api_key)
+    prompt = FEIRA_MESSAGE_PROMPT.format(preco_default=f"{preco_default:.2f}")
+    prompt += f'\n\nMensagem:\n"""\n{text}\n"""'
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt],
+        config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
+    )
+    return _parse_json(response.text)
+
+
+def parse_feira_image(image_bytes: bytes, preco_default: float, mime_type: Optional[str] = None,
+                      api_key: Optional[str] = None) -> dict:
+    """
+    Interpret an image sent during an open feira (e.g. a handwritten tally, or a
+    pix receipt screenshot). Returns the same shape as parse_feira_message.
+    """
+    client = _client(api_key)
+    if mime_type is None:
+        mime_type = _sniff_mime(image_bytes)
+    prompt = FEIRA_MESSAGE_PROMPT.format(preco_default=f"{preco_default:.2f}")
+    prompt += "\n\nA mensagem é uma IMAGEM (anotação à mão, recado, ou comprovante de pix). Extraia os dados dela."
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            prompt,
+        ],
+        config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json"),
+    )
+    return _parse_json(response.text)
