@@ -25,7 +25,10 @@ from datetime import datetime
 from typing import Optional
 
 from lib import sheets
-from scanner import config, extractor, notifier, rules
+from scanner import (
+    config, email_notifier, extractor,
+    history as history_mod, notifier, rules,
+)
 from scanner.scrapers import mercadolivre, vtex
 from scanner.scrapers.base import ProductResult
 
@@ -92,6 +95,7 @@ def run(dry_run: bool = False) -> dict:
 
     summary = {"scanned": 0, "notified": 0, "errors": 0}
     now = datetime.now()
+    email_batch: list[email_notifier.OfferEntry] = []
 
     for alerta in alertas:
         summary["scanned"] += 1
@@ -146,20 +150,25 @@ def run(dry_run: bool = False) -> dict:
                 summary["errors"] += 1
                 continue
 
-        # 5. classify against history
-        historico = sheets.get_precos_observados_by_scanner(sid, alerta.scanner_id, service=service)
-        # exclude the observation we just wrote (last one)
-        historico_precos_unid = [
-            h["preco_unidade"] for h in historico[:-1] if h["preco_unidade"] > 0
-        ] if not dry_run else [h["preco_unidade"] for h in historico if h["preco_unidade"] > 0]
+        # 5. classify against merged history (scans + compras from NF-e/bot)
+        full_hist = history_mod.get_full_history(
+            sid, alerta.scanner_id, alerta.insumo_id, service=service,
+        )
+        # In prod path we already wrote this scan's obs; drop the last scan
+        # so we don't compare against ourselves.
+        if not dry_run and full_hist and full_hist[-1].get("source") == "scan":
+            full_hist = full_hist[:-1]
 
-        verdict = rules.classify(global_best, historico_precos_unid, alerta, now=now)
+        verdict = rules.classify(global_best, full_hist, alerta, now=now)
         print(f"  → {verdict.severity or 'sem alerta'}: {verdict.reason}")
 
         # 6. notify if warranted
         if verdict.notifica:
             insumo_nome = _get_insumo_nome(sid, alerta.insumo_id, prod_names)
             notifier.send_offer(alerta, global_best, verdict, insumo_nome=insumo_nome, dry_run=dry_run)
+            email_batch.append(email_notifier.OfferEntry(
+                alerta=alerta, produto=global_best, verdict=verdict, insumo_nome=insumo_nome,
+            ))
             summary["notified"] += 1
 
         # 7. update Scanner_Alertas
@@ -173,6 +182,13 @@ def run(dry_run: bool = False) -> dict:
                 },
                 service=service,
             )
+
+    # 8. one consolidated email per scan (skipped if nothing fired)
+    if email_batch:
+        try:
+            email_notifier.send_scan_batch(email_batch, dry_run=dry_run)
+        except Exception as e:
+            print(f"email batch send failed (non-fatal): {e}")
 
     print(f"\n=== Summary: scanned={summary['scanned']} notified={summary['notified']} errors={summary['errors']} ===")
     return summary

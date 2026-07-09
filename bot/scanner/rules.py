@@ -5,112 +5,175 @@ decide whether the current price warrants a notification, and at what severity.
 
 Rules (all evaluated; the strongest wins):
 
-    🔥 forte   preco_unid ≤ mínimo histórico × 1.05  (near the best we've seen)
-    ✨ boa     preco_unid ≤ último preço × 0.90       (10%+ off the last time we bought)
-    ⚠️ alvo    preco ≤ preco_alvo                     (user-configured target hit)
+    🔥 forte  preco_unid ≤ baseline × 0.90  AND  preco_unid < último
+    ✨ boa    preco_unid ≤ baseline × 0.95  AND  preco_unid < último
+    ⚠️ alvo   preco_unid ≤ preco_alvo (user-configured target)
 
-Snooze filters only the intermediate '✨ boa' tier — 🔥 forte and ⚠️ alvo always
-notify. Rationale: after a big purchase we don't want to be bugged with small
-discounts, but a rare deep discount should still ring.
+`baseline` is the median of the last 30 days of observations. This adapts to
+long-term price inflation — a "great" price now is different from a great
+price two years ago. Requiring `preco < último` blocks the "stable price at
+baseline triggers alert" bug.
 
-The caller passes the observed ProductResult plus a compact history
-(list of past preco_unidade for this scanner). No I/O here — this module is
-pure data → decision.
+Fallback: with fewer than 10 observations, uses the old min/último logic so
+we alert something before enough history exists to compute a stable median.
+
+Snooze filters only the intermediate ✨ boa tier — 🔥 and ⚠️ always pass.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from statistics import median
 from typing import Optional
 
 from scanner.config import AlertaConfig
 from scanner.scrapers.base import ProductResult
 
 
-FORTE_THRESHOLD_RATIO = 1.05   # ≤ min × 1.05
-BOA_DESCONTO_RATIO = 0.90      # ≤ last × 0.90
+BASELINE_WINDOW_DAYS = 30
+MIN_OBS_FOR_MEDIAN = 10
+FORTE_RATIO = 0.90   # ≤ baseline × 0.90 (10% off)
+BOA_RATIO = 0.95     # ≤ baseline × 0.95 (5% off)
+
+# Fallback constants (used before we have MIN_OBS_FOR_MEDIAN observations)
+FALLBACK_FORTE_RATIO = 1.05
+FALLBACK_BOA_RATIO = 0.90
 
 
 @dataclass
 class Verdict:
-    severity: Optional[str]  # 'forte' | 'boa' | 'alvo' | None
+    severity: Optional[str]     # 'forte' | 'boa' | 'alvo' | None
     reason: str
-    min_historico: Optional[float]
+    baseline: Optional[float]   # median-30d (or min if fallback)
     ultimo_preco: Optional[float]
     preco_alvo: Optional[float]
+    savings: Optional[float]    # baseline - preco_unid, when severity fired
 
     @property
     def notifica(self) -> bool:
         return self.severity is not None
 
 
+def compute_baseline(historico: list[dict], now: Optional[datetime] = None) -> Optional[float]:
+    """Median of preco_unidade observations within the last 30 days.
+
+    `historico` items have keys `preco_unidade` and `timestamp` (ISO string).
+    Returns None if fewer than MIN_OBS_FOR_MEDIAN qualifying observations.
+    """
+    if not historico:
+        return None
+    now = now or datetime.now()
+    cutoff = now - timedelta(days=BASELINE_WINDOW_DAYS)
+    recent_prices: list[float] = []
+    for h in historico:
+        pu = h.get("preco_unidade") or 0
+        if pu <= 0:
+            continue
+        ts_raw = h.get("timestamp") or ""
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if ts >= cutoff:
+            recent_prices.append(float(pu))
+    if len(recent_prices) < MIN_OBS_FOR_MEDIAN:
+        return None
+    return float(median(recent_prices))
+
+
 def classify(
     produto: ProductResult,
-    historico_precos_unid: list[float],
+    historico: list[dict],
     alerta: AlertaConfig,
     now: Optional[datetime] = None,
 ) -> Verdict:
-    """Return the severity of this observation, considering snooze.
-
-    `historico_precos_unid` is the list of past preco_unidade values recorded
-    for this scanner (from Precos_Observados). Empty on the first scan.
-    """
+    """Return the severity of this observation, considering snooze."""
     if not produto.disponivel:
-        return Verdict(None, "produto indisponível", None, None, alerta.preco_alvo)
+        return Verdict(None, "produto indisponível", None, None, alerta.preco_alvo, None)
 
-    # Brand gate: for a scanner without fallback, an unconfirmed brand match
-    # never fires — irrelevant even at a great price.
     if alerta.marca_obrigatoria and not alerta.fallback_livre and not produto.marca_confirmada:
-        return Verdict(None, "marca obrigatória não confirmada", None, None, alerta.preco_alvo)
+        return Verdict(None, "marca obrigatória não confirmada", None, None, alerta.preco_alvo, None)
 
     preco_unid = produto.preco_unidade
-    min_hist = min(historico_precos_unid) if historico_precos_unid else None
-    ultimo = historico_precos_unid[-1] if historico_precos_unid else None
+    ultimo = None
+    if historico:
+        last = historico[-1]
+        pu = last.get("preco_unidade") or 0
+        if pu > 0:
+            ultimo = float(pu)
 
-    # 🔥 forte: near best we've seen.
-    forte = min_hist is not None and preco_unid <= min_hist * FORTE_THRESHOLD_RATIO
-
-    # ✨ boa: meaningful discount vs previous.
-    boa = ultimo is not None and preco_unid <= ultimo * BOA_DESCONTO_RATIO
-
-    # ⚠️ alvo: user-set target hit. Compared against preco_unidade so that
-    # `preco_alvo` in Scanner_Alertas is always "target price per unit" —
-    # same currency as forte/boa/history, works whether the listing is a
-    # single item or a 200-pack.
-    alvo = alerta.preco_alvo is not None and preco_unid <= alerta.preco_alvo
-
-    # First observation ever: don't spam. Wait for context to build.
-    if min_hist is None and not alvo:
-        return Verdict(None, "primeira observação — sem histórico", None, None, alerta.preco_alvo)
-
-    # Snooze filter: 'boa' silenced, others pass through.
     now = now or datetime.now()
     in_snooze = alerta.snooze_ate is not None and now < alerta.snooze_ate
 
+    # ⚠️ alvo — user-defined, always priority. Compare against preco_unid.
+    if alerta.preco_alvo is not None and preco_unid <= alerta.preco_alvo:
+        return Verdict(
+            "alvo",
+            f"preço/un R$ {preco_unid:.3f} ≤ alvo R$ {alerta.preco_alvo:.3f}",
+            baseline=None,
+            ultimo_preco=ultimo,
+            preco_alvo=alerta.preco_alvo,
+            savings=(alerta.preco_alvo - preco_unid) if preco_unid <= alerta.preco_alvo else None,
+        )
+
+    baseline = compute_baseline(historico, now=now)
+
+    # If we don't have enough history for a real baseline, fall back to old
+    # rules — but still require price to have dropped vs. last observation.
+    if baseline is None:
+        prices = [float(h.get("preco_unidade") or 0) for h in historico if (h.get("preco_unidade") or 0) > 0]
+        min_hist = min(prices) if prices else None
+
+        if min_hist is None:
+            return Verdict(None, "primeira observação — sem histórico",
+                           None, ultimo, alerta.preco_alvo, None)
+
+        if ultimo is None or preco_unid >= ultimo:
+            return Verdict(None, "preço não caiu vs. último (fallback)",
+                           min_hist, ultimo, alerta.preco_alvo, None)
+
+        forte = preco_unid <= min_hist * FALLBACK_FORTE_RATIO
+        boa = preco_unid <= ultimo * FALLBACK_BOA_RATIO
+        if forte:
+            return Verdict("forte",
+                f"preço/un R$ {preco_unid:.3f} ≤ mín histórico R$ {min_hist:.3f} × {FALLBACK_FORTE_RATIO} (fallback)",
+                min_hist, ultimo, alerta.preco_alvo, min_hist - preco_unid)
+        if boa and not in_snooze:
+            return Verdict("boa",
+                f"preço/un R$ {preco_unid:.3f} ≤ último R$ {ultimo:.3f} × {FALLBACK_BOA_RATIO} (fallback)",
+                min_hist, ultimo, alerta.preco_alvo, ultimo - preco_unid)
+        if boa and in_snooze:
+            return Verdict(None, "oferta boa silenciada por snooze",
+                           min_hist, ultimo, alerta.preco_alvo, None)
+        return Verdict(None, "sem oferta relevante (fallback)",
+                       min_hist, ultimo, alerta.preco_alvo, None)
+
+    # Median-30d path: require price drop vs. last observation to fire.
+    if ultimo is None or preco_unid >= ultimo:
+        return Verdict(None, "preço não caiu vs. último",
+                       baseline, ultimo, alerta.preco_alvo, None)
+
+    forte = preco_unid <= baseline * FORTE_RATIO
+    boa = preco_unid <= baseline * BOA_RATIO
+
     if forte:
         return Verdict("forte",
-            f"preço/un R$ {preco_unid:.3f} ≤ mín histórico R$ {min_hist:.3f} × {FORTE_THRESHOLD_RATIO}",
-            min_hist, ultimo, alerta.preco_alvo)
-    if alvo:
-        return Verdict("alvo",
-            f"preço/un R$ {preco_unid:.3f} ≤ alvo R$ {alerta.preco_alvo:.3f}",
-            min_hist, ultimo, alerta.preco_alvo)
+            f"preço/un R$ {preco_unid:.3f} ≤ habitual R$ {baseline:.3f} × {FORTE_RATIO}",
+            baseline, ultimo, alerta.preco_alvo, baseline - preco_unid)
     if boa and not in_snooze:
         return Verdict("boa",
-            f"preço/un R$ {preco_unid:.3f} ≤ último R$ {ultimo:.3f} × {BOA_DESCONTO_RATIO}",
-            min_hist, ultimo, alerta.preco_alvo)
+            f"preço/un R$ {preco_unid:.3f} ≤ habitual R$ {baseline:.3f} × {BOA_RATIO}",
+            baseline, ultimo, alerta.preco_alvo, baseline - preco_unid)
     if boa and in_snooze:
-        return Verdict(None,
-            f"oferta boa silenciada por snooze até {alerta.snooze_ate}",
-            min_hist, ultimo, alerta.preco_alvo)
+        return Verdict(None, "oferta boa silenciada por snooze",
+                       baseline, ultimo, alerta.preco_alvo, None)
 
-    return Verdict(None, "sem oferta relevante", min_hist, ultimo, alerta.preco_alvo)
+    return Verdict(None, "sem oferta relevante", baseline, ultimo, alerta.preco_alvo, None)
 
 
 def best_of(results: list[ProductResult]) -> Optional[ProductResult]:
-    """Given N results (multiple sizes/sellers), return the one with lowest
-    preco_unidade among products that are available. Ties broken by preco."""
+    """Return the product with the lowest preco_unidade among available ones."""
     disponiveis = [r for r in results if r.disponivel and r.preco > 0]
     if not disponiveis:
         return None

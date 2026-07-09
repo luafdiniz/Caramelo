@@ -1,9 +1,13 @@
 """Format + send scanner offer alerts to Telegram.
 
-Assumes the Caramelo Telegram bot token is in TELEGRAM_BOT_TOKEN env var
-(same env the bot uses). Recipients come from ALERT_CHAT_IDS env
-(comma-separated). Group chat IDs are negative, so we parse via int()
-instead of isdigit().
+Message format (per Luiza's request 2026-07-09):
+- 3 elements in each message: link, current price, savings vs. usual price.
+- Absolute values ("R$ 4,00 agora / habitual R$ 4,99 / você economiza R$ 0,99")
+  rather than percentages — easier to read at a glance.
+
+Recipients from ALERT_CHAT_IDS env (comma-separated, negatives OK for groups).
+Returns the Telegram message_id from `sendMessage` so callers can persist and
+delete later if needed.
 """
 
 from __future__ import annotations
@@ -37,8 +41,7 @@ def _chat_ids() -> list[int]:
     if not raw:
         raise RuntimeError(
             "ALERT_CHAT_IDS env var not configured — set it to a "
-            "comma-separated list of Telegram chat IDs (personal chats "
-            "are positive integers, groups are negative)."
+            "comma-separated list of Telegram chat IDs."
         )
     ids: list[int] = []
     for x in raw.split(","):
@@ -60,10 +63,6 @@ def _fmt_brl(value: Optional[float]) -> str:
     return f"R$ {value:.2f}".replace(".", ",")
 
 
-def _fmt_brl_precise(value: float) -> str:
-    return f"R$ {value:.3f}".replace(".", ",")
-
-
 def _esc(s: str) -> str:
     return html.escape(s or "", quote=False)
 
@@ -82,18 +81,18 @@ def build_message(
         f"<b>{header}</b> — {_esc(nome)}",
         f"<i>{_esc(produto.titulo[:80])}</i>",
         "",
-        f"💰 Preço: <b>{_fmt_brl(produto.preco)}</b>"
-        + (f" ({produto.qtde_unidades}un = {_fmt_brl_precise(produto.preco_unidade)}/un)"
-           if produto.qtde_unidades > 1 else ""),
+        f"💰 <b>{_fmt_brl(produto.preco_unidade)}</b>"
+        + (f" por unidade ({produto.qtde_unidades}un por {_fmt_brl(produto.preco)})"
+           if produto.qtde_unidades > 1 else " agora"),
     ]
 
-    hist_bits = []
-    if verdict.min_historico is not None:
-        hist_bits.append(f"mín: {_fmt_brl_precise(verdict.min_historico)}/un")
-    if verdict.ultimo_preco is not None:
-        hist_bits.append(f"últ: {_fmt_brl_precise(verdict.ultimo_preco)}/un")
-    if hist_bits:
-        lines.append(f"📊 Histórico: {' | '.join(hist_bits)}")
+    if verdict.baseline is not None:
+        lines.append(f"📊 Preço habitual: {_fmt_brl(verdict.baseline)}")
+    elif verdict.ultimo_preco is not None:
+        lines.append(f"📊 Último preço: {_fmt_brl(verdict.ultimo_preco)}")
+
+    if verdict.savings is not None and verdict.savings > 0:
+        lines.append(f"💸 Você economiza {_fmt_brl(verdict.savings)} por unidade")
 
     lines.append(f"📍 {_esc(site_label)}")
 
@@ -119,26 +118,29 @@ def send_offer(
     verdict: Verdict,
     insumo_nome: str = "",
     dry_run: bool = False,
-) -> None:
-    """Format and dispatch. In dry_run mode prints instead of sending."""
+) -> list[int]:
+    """Format and dispatch. Returns list of Telegram message_ids sent
+    (empty list on dry_run or send failure). Persist to enable future delete."""
     text = build_message(alerta, produto, verdict, insumo_nome)
     if dry_run:
         print("---- DRY RUN telegram message ----")
         print(text)
         print("----------------------------------")
-        return
+        return []
+
+    message_ids: list[int] = []
     for cid in _chat_ids():
         try:
-            telegram_client.send_message(cid, text)
+            resp = telegram_client.send_message(cid, text)
+            mid = (resp or {}).get("result", {}).get("message_id")
+            if mid:
+                message_ids.append(int(mid))
         except Exception as e:
             print(f"notifier: send to {cid} failed: {e}")
+    return message_ids
 
 
 def send_heartbeat_alert(offline: list[dict], dry_run: bool = False) -> None:
-    """Notify when scanners haven't updated in a while.
-
-    `offline` items: [{"scanner_id": ..., "termo": ..., "ultima_verif": ...}]
-    """
     if not offline:
         return
     lines = ["<b>⚠️ Scanner sem sinal</b>", ""]
