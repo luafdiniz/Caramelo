@@ -220,6 +220,153 @@ def append_compra(
     return compra_id
 
 
+def append_preco_observado(
+    spreadsheet_id: str,
+    timestamp: str,
+    scanner_id: str,
+    site: str,
+    url: str,
+    preco: float,
+    preco_unidade: float,
+    qtde_unidades: float,
+    disponivel: bool,
+    marca_detectada: str,
+    titulo: str,
+    service=None,
+) -> None:
+    """Append one scan observation. Uses APPEND so concurrent runs are safe."""
+    service = service or get_service()
+    row = [[
+        timestamp,
+        scanner_id,
+        site,
+        url,
+        preco,
+        preco_unidade,
+        qtde_unidades,
+        "TRUE" if disponivel else "FALSE",
+        marca_detectada or "",
+        titulo or "",
+    ]]
+    service.spreadsheets().values().append(
+        spreadsheetId=spreadsheet_id,
+        range="Precos_Observados!A:J",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": row},
+    ).execute()
+
+
+def update_scanner_row(
+    spreadsheet_id: str,
+    scanner_id: str,
+    updates: dict,
+    service=None,
+) -> bool:
+    """Patch selected columns of one Scanner_Alertas row identified by scanner_id.
+
+    `updates` keys accepted: ultimo_preco, ultima_verif, status, snooze_ate.
+    Returns True if row found and patched.
+    """
+    allowed = {
+        "ultimo_preco": "J",
+        "ultima_verif": "K",
+        "status": "L",
+        "snooze_ate": "M",
+    }
+    for k in updates:
+        if k not in allowed:
+            raise ValueError(f"update_scanner_row: unknown key {k!r}")
+
+    service = service or get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A:A"
+    ).execute()
+    rows = result.get("values", [])
+    row_idx = None
+    for i, r in enumerate(rows, start=1):
+        if r and r[0] == scanner_id:
+            row_idx = i
+            break
+    if row_idx is None:
+        return False
+
+    data = [
+        {
+            "range": f"Scanner_Alertas!{allowed[k]}{row_idx}",
+            "values": [[updates[k] if updates[k] is not None else ""]],
+        }
+        for k in updates
+    ]
+    service.spreadsheets().values().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"valueInputOption": "USER_ENTERED", "data": data},
+    ).execute()
+    return True
+
+
+def get_precos_observados_by_scanner(
+    spreadsheet_id: str, scanner_id: str, service=None
+) -> list[dict]:
+    """Return all observations for one scanner_id, oldest first."""
+    service = service or get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Precos_Observados!A2:J"
+    ).execute()
+    rows = result.get("values", [])
+    out = []
+    for r in rows:
+        if len(r) < 2 or r[1] != scanner_id:
+            continue
+        r = list(r) + [""] * (10 - len(r))
+        try:
+            preco = float(str(r[4] or "0").replace(",", "."))
+            preco_unid = float(str(r[5] or "0").replace(",", "."))
+            qtde = int(float(str(r[6] or "1").replace(",", ".")))
+        except ValueError:
+            continue
+        out.append({
+            "timestamp": r[0],
+            "scanner_id": r[1],
+            "site": r[2],
+            "url": r[3],
+            "preco": preco,
+            "preco_unidade": preco_unid,
+            "qtde_unidades": qtde,
+            "disponivel": str(r[7]).upper() == "TRUE",
+            "marca_detectada": r[8],
+            "titulo": r[9],
+        })
+    return out
+
+
+def get_compras_by_produto(spreadsheet_id: str, produto_id: str, service=None) -> list[dict]:
+    """Return all Compras rows for one produto_id, ordered as stored (oldest→newest)."""
+    service = service or get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id, range="Compras!A2:M"
+    ).execute()
+    rows = result.get("values", [])
+    out = []
+    for r in rows:
+        if len(r) < 3 or r[2] != produto_id:
+            continue
+        r = list(r) + [""] * (13 - len(r))
+        try:
+            preco_unitario = float(str(r[9] or "0").replace(",", "."))
+        except ValueError:
+            preco_unitario = 0.0
+        out.append({
+            "id": r[0],
+            "data": r[1],
+            "produto_id": r[2],
+            "fornecedor_id": r[3],
+            "marca": r[4],
+            "preco_unitario": preco_unitario,
+        })
+    return out
+
+
 def distribute_frete_desconto(
     items: list[dict], frete: float = 0.0, desconto: float = 0.0,
 ) -> list[float]:

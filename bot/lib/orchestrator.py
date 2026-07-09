@@ -967,6 +967,23 @@ def _finalize(chat_id: int, message_id: int, payload: dict, state_id: str, servi
 
     state.delete_state(_spreadsheet_id(), state_id, service=service)
 
+    # Scanner hook: silence "boa" offer alerts for each purchased insumo
+    # (forte and alvo tiers still pass through — see scanner.rules).
+    snoozed_scanners: list[str] = []
+    try:
+        from scanner import runner as scanner_runner
+        seen_insumos = set()
+        for it in to_append:
+            pid = it.get("produto_id")
+            if not pid or pid in seen_insumos:
+                continue
+            seen_insumos.add(pid)
+            snoozed_scanners.extend(
+                scanner_runner.snooze_by_insumo(_spreadsheet_id(), pid, service=service)
+            )
+    except Exception as e:
+        print(f"scanner snooze hook failed (non-fatal): {e}")
+
     rate_line = ""
     if frete or desconto:
         parts = []
@@ -976,6 +993,8 @@ def _finalize(chat_id: int, message_id: int, payload: dict, state_id: str, servi
             parts.append(f"desconto R$ {desconto:.2f}")
         rate_line = f" ({', '.join(parts)})"
     msg = f"✅ Adicionei {len(added)} compra(s){rate_line}:\n" + "\n".join(f"• {c}" for c in added)
+    if snoozed_scanners:
+        msg += f"\n\n🔕 Silenciei ofertas ✨ boas de {len(snoozed_scanners)} scanner(s): {', '.join(snoozed_scanners)}"
     tg.edit_message_text(chat_id, message_id, msg, reply_markup=None)
 
 
@@ -1585,11 +1604,18 @@ def _handle_compra_callback(chat_id, message_id, state_id, payload, parts, servi
                 notas="Via bot /compra (sem nota)",
                 service=service,
             )
-            tg.edit_message_text(
-                chat_id, message_id,
-                f"✅ Compra <b>{compra_id}</b> salva.",
-                reply_markup=None,
-            )
+            snoozed = []
+            try:
+                from scanner import runner as scanner_runner
+                snoozed = scanner_runner.snooze_by_insumo(
+                    _spreadsheet_id(), payload["produto_id"], service=service,
+                )
+            except Exception as e:
+                print(f"scanner snooze hook failed (non-fatal): {e}")
+            msg = f"✅ Compra <b>{compra_id}</b> salva."
+            if snoozed:
+                msg += f"\n🔕 Silenciei ✨ boas de {len(snoozed)} scanner(s)."
+            tg.edit_message_text(chat_id, message_id, msg, reply_markup=None)
             state.delete_state(_spreadsheet_id(), state_id, service=service)
         except Exception as e:
             tg.edit_message_text(chat_id, message_id, f"❌ Erro salvando: <code>{_esc(e)}</code>", reply_markup=None)
