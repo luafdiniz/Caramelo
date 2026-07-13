@@ -56,10 +56,12 @@ def _curl_get_json(url: str) -> list | dict:
     return json.loads(body)
 
 
-def _extract_offer(product: dict) -> tuple[float, float, bool, bool]:
-    """Return (preco, preco_lista, disponivel, tem_oferta_clube)."""
+def _extract_offer(product: dict) -> tuple[float, float, bool, bool, str, str]:
+    """Return (preco, preco_lista, disponivel, tem_oferta_clube, sku_id, seller_id)."""
     for item in product.get("items", []):
+        sku_id = str(item.get("itemId") or "")
         for seller in item.get("sellers", []):
+            seller_id = str(seller.get("sellerId") or "1")
             offer = seller.get("commertialOffer") or {}
             price = float(offer.get("Price") or 0)
             list_price = float(offer.get("ListPrice") or price)
@@ -67,8 +69,8 @@ def _extract_offer(product: dict) -> tuple[float, float, bool, bool]:
             teasers = offer.get("Teasers") or []
             has_club = bool(teasers)
             if price > 0:
-                return price, list_price, available, has_club
-    return 0.0, 0.0, False, False
+                return price, list_price, available, has_club, sku_id, seller_id
+    return 0.0, 0.0, False, False, "", "1"
 
 
 def search(site_key: str, termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
@@ -94,7 +96,7 @@ def search(site_key: str, termo: str, marca_obrigatoria: str = "") -> list[Produ
 
     out: list[ProductResult] = []
     for p in products:
-        preco, preco_lista, disponivel, tem_clube = _extract_offer(p)
+        preco, preco_lista, disponivel, tem_clube, sku_id, seller_id = _extract_offer(p)
         if preco <= 0:
             continue
         titulo = p.get("productName", "") or ""
@@ -117,5 +119,7 @@ def search(site_key: str, termo: str, marca_obrigatoria: str = "") -> list[Produ
             disponivel=disponivel,
             tem_oferta_clube=tem_clube,
             marca_confirmada=marca_ok,
+            sku_id=sku_id,
+            seller_id=seller_id,
         ))
     return out

@@ -49,8 +49,7 @@ _SITE_LABEL = {
 }
 
 _SEVERITY_LABEL = {
-    "forte": ("🔥 OFERTA FORTE", "#e64a19"),
-    "boa": ("✨ Oferta boa", "#3f51b5"),
+    "forte": ("🔥 OFERTA", "#e64a19"),
     "alvo": ("⚠️ Preço-alvo atingido", "#f9a825"),
 }
 
@@ -82,25 +81,33 @@ def _card_html(entry: OfferEntry) -> str:
     nome = _esc(entry.insumo_nome or entry.alerta.insumo_id)
     titulo = _esc(entry.produto.titulo[:120])
 
+    preco_unid = entry.produto.preco_unidade_com_frete or entry.produto.preco_unidade
     if entry.produto.qtde_unidades > 1:
         preco_line = (
-            f"<b style='font-size:22px;color:#111'>{_fmt_brl(entry.produto.preco_unidade)}</b>"
+            f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_unid)}</b>"
             f" <span style='color:#666'>por unidade</span>"
             f"<br><span style='color:#888;font-size:13px'>"
-            f"{entry.produto.qtde_unidades} unidades por {_fmt_brl(entry.produto.preco)}"
+            f"{entry.produto.qtde_unidades} unidades"
             f"</span>"
         )
     else:
         preco_line = (
-            f"<b style='font-size:22px;color:#111'>{_fmt_brl(entry.produto.preco)}</b>"
-            f" <span style='color:#666'>agora</span>"
+            f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_unid)}</b>"
+            f" <span style='color:#666'>por unidade</span>"
         )
 
     lines_meta = []
+    if entry.produto.frete > 0 or entry.produto.preco_com_frete > 0:
+        prazo = f" • {_esc(entry.produto.frete_prazo_dias)} dias úteis" if entry.produto.frete_prazo_dias else ""
+        lines_meta.append(
+            f"📦 Produto <b>{_fmt_brl(entry.produto.preco)}</b> + "
+            f"frete <b>{_fmt_brl(entry.produto.frete)}</b> = "
+            f"<b>{_fmt_brl(entry.produto.preco_com_frete)}</b>{prazo}"
+        )
     if entry.verdict.baseline is not None:
-        lines_meta.append(f"📊 Preço habitual: <b>{_fmt_brl(entry.verdict.baseline)}</b>")
+        lines_meta.append(f"📊 Preço habitual: <b>{_fmt_brl(entry.verdict.baseline)}</b> por unidade")
     elif entry.verdict.ultimo_preco is not None:
-        lines_meta.append(f"📊 Último preço: <b>{_fmt_brl(entry.verdict.ultimo_preco)}</b>")
+        lines_meta.append(f"📊 Último preço: <b>{_fmt_brl(entry.verdict.ultimo_preco)}</b> por unidade")
     if entry.verdict.savings and entry.verdict.savings > 0:
         lines_meta.append(f"💸 Você economiza <b>{_fmt_brl(entry.verdict.savings)}</b> por unidade")
 

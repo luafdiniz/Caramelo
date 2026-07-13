@@ -30,8 +30,7 @@ _SITE_LABEL = {
 }
 
 _SEVERITY_HEADER = {
-    "forte": "🔥 OFERTA FORTE",
-    "boa": "✨ Oferta boa",
+    "forte": "🔥 OFERTA",
     "alvo": "⚠️ Preço-alvo atingido",
 }
 
@@ -81,15 +80,28 @@ def build_message(
         f"<b>{header}</b> — {_esc(nome)}",
         f"<i>{_esc(produto.titulo[:80])}</i>",
         "",
-        f"💰 <b>{_fmt_brl(produto.preco_unidade)}</b>"
-        + (f" por unidade ({produto.qtde_unidades}un por {_fmt_brl(produto.preco)})"
-           if produto.qtde_unidades > 1 else " agora"),
     ]
 
+    if produto.qtde_unidades > 1:
+        lines.append(
+            f"💰 <b>{_fmt_brl(produto.preco_unidade_com_frete or produto.preco_unidade)}</b> "
+            f"por unidade ({produto.qtde_unidades}un × {_fmt_brl(produto.preco / max(produto.qtde_unidades,1))} nominal)"
+        )
+    else:
+        lines.append(f"💰 <b>{_fmt_brl(produto.preco_unidade_com_frete or produto.preco_unidade)}</b> por unidade")
+
+    # Freight breakdown (only when we actually consulted frete)
+    if produto.frete > 0 or produto.preco_com_frete > 0:
+        prazo = f" • {_esc(produto.frete_prazo_dias)} dias úteis" if produto.frete_prazo_dias else ""
+        lines.append(
+            f"📦 Produto {_fmt_brl(produto.preco)} + frete {_fmt_brl(produto.frete)} = "
+            f"<b>{_fmt_brl(produto.preco_com_frete)}</b>{prazo}"
+        )
+
     if verdict.baseline is not None:
-        lines.append(f"📊 Preço habitual: {_fmt_brl(verdict.baseline)}")
+        lines.append(f"📊 Preço habitual: {_fmt_brl(verdict.baseline)} por unidade")
     elif verdict.ultimo_preco is not None:
-        lines.append(f"📊 Último preço: {_fmt_brl(verdict.ultimo_preco)}")
+        lines.append(f"📊 Último preço: {_fmt_brl(verdict.ultimo_preco)} por unidade")
 
     if verdict.savings is not None and verdict.savings > 0:
         lines.append(f"💸 Você economiza {_fmt_brl(verdict.savings)} por unidade")

@@ -26,11 +26,36 @@ from typing import Optional
 
 from lib import sheets
 from scanner import (
-    config, email_notifier, extractor,
+    config, email_notifier, extractor, frete as frete_mod,
     history as history_mod, notifier, rules,
 )
 from scanner.scrapers import mercadolivre, vtex
 from scanner.scrapers.base import ProductResult
+
+
+def _apply_frete(produto: ProductResult) -> ProductResult:
+    """Consult freight for this product, populate the *_com_frete fields
+    AND overwrite preco_unidade so downstream rules use the delivered
+    price. Degrades to preco (0 freight) on any error."""
+    if produto.site not in vtex.HOSTNAMES or not produto.sku_id:
+        # No freight source — treat frete=0
+        produto.frete = 0.0
+        produto.preco_com_frete = produto.preco
+        produto.preco_unidade_com_frete = produto.preco_unidade
+        return produto
+    valor, prazo = frete_mod.estimate_vtex(
+        produto.site, produto.sku_id, quantity=1, seller_id=produto.seller_id or "1",
+    )
+    produto.frete = float(valor)
+    produto.preco_com_frete = round(produto.preco + valor, 2)
+    denom = produto.qtde_unidades if produto.qtde_unidades > 0 else 1
+    produto.preco_unidade_com_frete = round(produto.preco_com_frete / denom, 4)
+    produto.frete_prazo_dias = prazo or ""
+    # Downstream rules key off preco_unidade — swap in the delivered value
+    # so classify() operates on apples-to-apples. Preserve nominal in
+    # preco_lista for the notifier breakdown.
+    produto.preco_unidade = produto.preco_unidade_com_frete
+    return produto
 
 
 def _spreadsheet_id() -> str:
@@ -115,6 +140,11 @@ def run(dry_run: bool = False) -> dict:
             else:
                 print(f"  {site_key}: no valid result")
 
+        # Apply freight to each site's candidate BEFORE picking global best —
+        # this reorders results by delivered price. Free-shipping thresholds
+        # are respected by the store's API.
+        for r in all_results:
+            _apply_frete(r)
         global_best = rules.best_of(all_results)
         if not global_best:
             # Nothing to record; mark status but keep scanning tomorrow
@@ -143,6 +173,8 @@ def run(dry_run: bool = False) -> dict:
                     disponivel=global_best.disponivel,
                     marca_detectada=global_best.marca_detectada,
                     titulo=global_best.titulo,
+                    frete=global_best.frete,
+                    preco_com_frete=global_best.preco_com_frete,
                     service=service,
                 )
             except Exception as e:

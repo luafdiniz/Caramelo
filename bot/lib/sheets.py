@@ -232,9 +232,16 @@ def append_preco_observado(
     disponivel: bool,
     marca_detectada: str,
     titulo: str,
+    frete: float = 0.0,
+    preco_com_frete: float = 0.0,
     service=None,
 ) -> None:
-    """Append one scan observation. Uses APPEND so concurrent runs are safe."""
+    """Append one scan observation. Uses APPEND so concurrent runs are safe.
+
+    `preco_unidade` here is the *delivered* unit price (includes rateio of
+    frete). Columns K/L store the raw frete value and total-with-frete for
+    audit/debug.
+    """
     service = service or get_service()
     row = [[
         timestamp,
@@ -247,10 +254,12 @@ def append_preco_observado(
         "TRUE" if disponivel else "FALSE",
         marca_detectada or "",
         titulo or "",
+        frete,
+        preco_com_frete,
     ]]
     service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
-        range="Precos_Observados!A:J",
+        range="Precos_Observados!A:L",
         valueInputOption="USER_ENTERED",
         insertDataOption="INSERT_ROWS",
         body={"values": row},
@@ -311,18 +320,20 @@ def get_precos_observados_by_scanner(
     """Return all observations for one scanner_id, oldest first."""
     service = service or get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Precos_Observados!A2:J"
+        spreadsheetId=spreadsheet_id, range="Precos_Observados!A2:L"
     ).execute()
     rows = result.get("values", [])
     out = []
     for r in rows:
         if len(r) < 2 or r[1] != scanner_id:
             continue
-        r = list(r) + [""] * (10 - len(r))
+        r = list(r) + [""] * (12 - len(r))
         try:
             preco = float(str(r[4] or "0").replace(",", "."))
             preco_unid = float(str(r[5] or "0").replace(",", "."))
             qtde = int(float(str(r[6] or "1").replace(",", ".")))
+            frete = float(str(r[10] or "0").replace(",", "."))
+            preco_com_frete = float(str(r[11] or "0").replace(",", "."))
         except ValueError:
             continue
         out.append({
@@ -336,6 +347,8 @@ def get_precos_observados_by_scanner(
             "disponivel": str(r[7]).upper() == "TRUE",
             "marca_detectada": r[8],
             "titulo": r[9],
+            "frete": frete,
+            "preco_com_frete": preco_com_frete,
         })
     return out
 

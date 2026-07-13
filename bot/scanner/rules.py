@@ -5,9 +5,16 @@ decide whether the current price warrants a notification, and at what severity.
 
 Rules (all evaluated; the strongest wins):
 
-    🔥 forte  preco_unid ≤ baseline × 0.90  AND  preco_unid < último
-    ✨ boa    preco_unid ≤ baseline × 0.95  AND  preco_unid < último
+    🔥 forte  preco_unid ≤ baseline × 0.90  AND  preco_unid < último  (>10% off)
     ⚠️ alvo   preco_unid ≤ preco_alvo (user-configured target)
+
+Per Fila's request (2026-07-13): only imperdíveis. The prior "✨ boa" 5%
+tier was removed — it created too much noise around routine price
+fluctuation. Only ≥10% discounts fire the wire now.
+
+`preco_unid` here is the *delivered* price (product + frete rateado per
+unit). Runner.py substitutes preco_unidade with preco_unidade_com_frete
+before calling classify() so all comparisons are apples-to-apples.
 
 `baseline` is the median of the last 30 days of observations. This adapts to
 long-term price inflation — a "great" price now is different from a great
@@ -16,8 +23,6 @@ baseline triggers alert" bug.
 
 Fallback: with fewer than 10 observations, uses the old min/último logic so
 we alert something before enough history exists to compute a stable median.
-
-Snooze filters only the intermediate ✨ boa tier — 🔥 and ⚠️ always pass.
 """
 
 from __future__ import annotations
@@ -33,17 +38,15 @@ from scanner.scrapers.base import ProductResult
 
 BASELINE_WINDOW_DAYS = 30
 MIN_OBS_FOR_MEDIAN = 10
-FORTE_RATIO = 0.90   # ≤ baseline × 0.90 (10% off)
-BOA_RATIO = 0.95     # ≤ baseline × 0.95 (5% off)
+FORTE_RATIO = 0.90   # ≤ baseline × 0.90 (>10% off) — only tier that fires now
 
 # Fallback constants (used before we have MIN_OBS_FOR_MEDIAN observations)
-FALLBACK_FORTE_RATIO = 1.05
-FALLBACK_BOA_RATIO = 0.90
+FALLBACK_FORTE_RATIO = 0.90
 
 
 @dataclass
 class Verdict:
-    severity: Optional[str]     # 'forte' | 'boa' | 'alvo' | None
+    severity: Optional[str]     # 'forte' | 'alvo' | None
     reason: str
     baseline: Optional[float]   # median-30d (or min if fallback)
     ultimo_preco: Optional[float]
@@ -104,7 +107,6 @@ def classify(
             ultimo = float(pu)
 
     now = now or datetime.now()
-    in_snooze = alerta.snooze_ate is not None and now < alerta.snooze_ate
 
     # ⚠️ alvo — user-defined, always priority. Compare against preco_unid.
     if alerta.preco_alvo is not None and preco_unid <= alerta.preco_alvo:
@@ -114,13 +116,12 @@ def classify(
             baseline=None,
             ultimo_preco=ultimo,
             preco_alvo=alerta.preco_alvo,
-            savings=(alerta.preco_alvo - preco_unid) if preco_unid <= alerta.preco_alvo else None,
+            savings=(alerta.preco_alvo - preco_unid),
         )
 
     baseline = compute_baseline(historico, now=now)
 
-    # If we don't have enough history for a real baseline, fall back to old
-    # rules — but still require price to have dropped vs. last observation.
+    # Fallback path (<10 obs): use min-histórico as reference.
     if baseline is None:
         prices = [float(h.get("preco_unidade") or 0) for h in historico if (h.get("preco_unidade") or 0) > 0]
         min_hist = min(prices) if prices else None
@@ -128,24 +129,14 @@ def classify(
         if min_hist is None:
             return Verdict(None, "primeira observação — sem histórico",
                            None, ultimo, alerta.preco_alvo, None)
-
         if ultimo is None or preco_unid >= ultimo:
             return Verdict(None, "preço não caiu vs. último (fallback)",
                            min_hist, ultimo, alerta.preco_alvo, None)
 
-        forte = preco_unid <= min_hist * FALLBACK_FORTE_RATIO
-        boa = preco_unid <= ultimo * FALLBACK_BOA_RATIO
-        if forte:
+        if preco_unid <= min_hist * FALLBACK_FORTE_RATIO:
             return Verdict("forte",
                 f"preço/un R$ {preco_unid:.3f} ≤ mín histórico R$ {min_hist:.3f} × {FALLBACK_FORTE_RATIO} (fallback)",
                 min_hist, ultimo, alerta.preco_alvo, min_hist - preco_unid)
-        if boa and not in_snooze:
-            return Verdict("boa",
-                f"preço/un R$ {preco_unid:.3f} ≤ último R$ {ultimo:.3f} × {FALLBACK_BOA_RATIO} (fallback)",
-                min_hist, ultimo, alerta.preco_alvo, ultimo - preco_unid)
-        if boa and in_snooze:
-            return Verdict(None, "oferta boa silenciada por snooze",
-                           min_hist, ultimo, alerta.preco_alvo, None)
         return Verdict(None, "sem oferta relevante (fallback)",
                        min_hist, ultimo, alerta.preco_alvo, None)
 
@@ -154,20 +145,10 @@ def classify(
         return Verdict(None, "preço não caiu vs. último",
                        baseline, ultimo, alerta.preco_alvo, None)
 
-    forte = preco_unid <= baseline * FORTE_RATIO
-    boa = preco_unid <= baseline * BOA_RATIO
-
-    if forte:
+    if preco_unid <= baseline * FORTE_RATIO:
         return Verdict("forte",
             f"preço/un R$ {preco_unid:.3f} ≤ habitual R$ {baseline:.3f} × {FORTE_RATIO}",
             baseline, ultimo, alerta.preco_alvo, baseline - preco_unid)
-    if boa and not in_snooze:
-        return Verdict("boa",
-            f"preço/un R$ {preco_unid:.3f} ≤ habitual R$ {baseline:.3f} × {BOA_RATIO}",
-            baseline, ultimo, alerta.preco_alvo, baseline - preco_unid)
-    if boa and in_snooze:
-        return Verdict(None, "oferta boa silenciada por snooze",
-                       baseline, ultimo, alerta.preco_alvo, None)
 
     return Verdict(None, "sem oferta relevante", baseline, ultimo, alerta.preco_alvo, None)
 
