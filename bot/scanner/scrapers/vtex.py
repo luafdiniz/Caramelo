@@ -14,6 +14,7 @@ from urllib.parse import quote
 
 from scanner.extractor import (
     extract_qtde_unidades,
+    extract_medida,
     brand_confirmed_in,
     preco_por_unidade,
 )
@@ -111,6 +112,7 @@ def search(site_key: str, termo: str, marca_obrigatoria: str = "") -> list[Produ
             pdp = f"https://{hostname}/{pdp.lstrip('/')}"
 
         qtde = extract_qtde_unidades(titulo)
+        medida_val, medida_un = extract_medida(titulo)
         marca_ok = brand_confirmed_in(marca_obrigatoria, titulo, marca)
         out.append(ProductResult(
             site=site_key,
@@ -127,5 +129,7 @@ def search(site_key: str, termo: str, marca_obrigatoria: str = "") -> list[Produ
             sku_id=sku_id,
             seller_id=seller_id,
             promocoes=promo_names,
+            medida_valor=medida_val,
+            medida_unidade=medida_un,
         ))
     return out

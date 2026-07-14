@@ -54,31 +54,22 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
 
     seller = produto.seller_id or "1"
 
-    # Grid picks:
-    #  - 1 (baseline)
-    #  - 2 (isolates the promo, no bulk effect)
-    #  - qtde_bulk (natural pack)
-    #  - free-shipping breakpoint (found via 1-shot binary search against
-    #    the post-discount total, so promos are respected)
-    extras: list[int] = [2]
+    # Baseline simulation on bulk_qtde — used to estimate the free-shipping
+    # breakpoint AND reused inside the final curve (so we save one HTTP call).
+    bulk_sim = None
     threshold = frete_overrides.get_free_threshold(produto.site)
     if threshold and produto.preco > 0:
-        # First simulate bulk_qtde to learn the real per-unit rate AFTER
-        # promo discounts (e.g. "50% no 2°" halves every 2nd unit).
         bulk_sim = frete_mod.simulate_cart(
             produto.site, produto.sku_id, produto.bulk_qtde, seller_id=seller,
         )
-        if bulk_sim and bulk_sim.total_produto > 0 and produto.bulk_qtde > 0:
-            rate_effective = bulk_sim.total_produto / produto.bulk_qtde
-            if rate_effective > 0:
-                breakpoint_est = math.ceil(threshold / rate_effective)
-                # Include the estimated point AND its neighbor — for
-                # pair-based promos ("50% no 2°") the estimate can land 1
-                # short of the pós-desconto threshold. The renderer collapses
-                # consecutive zero-freight rows so at most one "sem frete"
-                # line shows.
-                extras.append(breakpoint_est)
-                extras.append(breakpoint_est + 1)
+
+    extras: list[int] = [2]
+    if bulk_sim and bulk_sim.total_produto > 0 and produto.bulk_qtde > 0:
+        rate_effective = bulk_sim.total_produto / produto.bulk_qtde
+        if rate_effective > 0 and threshold:
+            breakpoint_est = math.ceil(threshold / rate_effective)
+            extras.append(breakpoint_est)
+            extras.append(breakpoint_est + 1)
 
     grid_qs = frete_mod.default_grid(produto.bulk_qtde, extra=extras)
     sims = frete_mod.simulate_curve(
@@ -116,8 +107,12 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
     produto.preco_com_frete = bulk["preco_total"]
     produto.preco_unidade_com_frete = bulk["preco_unid_delivered"]
 
-    # Downstream rules key off preco_unidade — use the bulk delivered price.
-    produto.preco_unidade = produto.preco_unidade_com_frete
+    # Guard: if the freight sim came back empty (WAF/network), the bulk
+    # row can be zeroed out. Leaving preco_unidade at 0 would trigger a
+    # false-positive ⚠️ alvo (0 ≤ preco_alvo) or 🔥 forte. Keep the raw
+    # per-unit shelf price instead so classify() falls back to "no drop".
+    if produto.preco_unidade_com_frete > 0:
+        produto.preco_unidade = produto.preco_unidade_com_frete
     return produto
 
 

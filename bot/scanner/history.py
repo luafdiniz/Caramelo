@@ -33,8 +33,14 @@ def _normalize_timestamp(raw) -> str:
         serial = float(normalized)
     except ValueError:
         return s
-    base = datetime(1899, 12, 30)
-    return (base + timedelta(days=serial)).isoformat(timespec="seconds")
+    # Bare integers that look like unix-ish (>100k) can overflow the
+    # 1899-based conversion. Only treat as sheet-serial if plausibly a date.
+    if serial > 100000 or serial < 0:
+        return s
+    try:
+        return (datetime(1899, 12, 30) + timedelta(days=serial)).isoformat(timespec="seconds")
+    except (OverflowError, ValueError):
+        return s
 
 
 def _load_compras(spreadsheet_id: str, insumo_id: str, service=None) -> list[dict]:

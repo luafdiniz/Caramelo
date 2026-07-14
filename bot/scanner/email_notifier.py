@@ -94,18 +94,23 @@ def _card_html(entry: OfferEntry) -> str:
         f" <span style='color:#666'>por unidade comprando {label_qtde} {unids}embalagens</span>"
     )
 
-    # Promo callout (isolated from freight — same idea as Telegram)
+    # Promo callout — same detection logic as the Telegram side
+    from scanner.notifier import _detect_promo_group  # local import avoids cycle
     promo_html = ""
     if p.promocoes:
         promo_str = ", ".join(p.promocoes)
-        promo_row = next((c for c in p.frete_curve if c["qtde"] == 2), None)
-        if promo_row:
-            preco_produto_2un = promo_row["preco_produto_com_desconto"] / 2
+        group_size = _detect_promo_group(promo_str)
+        promo_row = None
+        if group_size:
+            promo_row = next((c for c in p.frete_curve if c["qtde"] == group_size), None)
+        if group_size and promo_row:
+            preco_produto_por_un = promo_row["preco_produto_com_desconto"] / group_size
+            group_label = "em pares" if group_size == 2 else f"em grupos de {group_size}"
             promo_html = (
                 f"<div style='margin-top:10px;padding:10px 12px;background:#fff8e1;"
                 f"border-radius:6px;font-size:13px;color:#5a4200'>"
-                f"🎁 Promoção <b>{_esc(promo_str)}</b>: em pares "
-                f"<b>{_fmt_brl(preco_produto_2un)}</b>/un só o produto</div>"
+                f"🎁 Promoção <b>{_esc(promo_str)}</b>: {group_label} "
+                f"<b>{_fmt_brl(preco_produto_por_un)}</b>/un só o produto</div>"
             )
         else:
             promo_html = (
@@ -150,6 +155,16 @@ def _card_html(entry: OfferEntry) -> str:
                 f"💡 Frete zera a partir de {first_zero['qtde']} {emb_word_pl}</div>"
             )
 
+    # R$ por medida base (kg/L)
+    medida_html = ""
+    if p.medida_valor > 0 and p.medida_unidade:
+        preco_final = p.preco_unidade_com_frete or p.preco_unidade
+        preco_por_medida = preco_final / p.medida_valor
+        medida_html = (
+            f"<div style='margin-top:8px;font-size:13px;color:#333'>"
+            f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{p.medida_unidade}</div>"
+        )
+
     lines_meta = []
     if entry.verdict.severity == "alvo":
         if entry.verdict.savings is not None and entry.verdict.savings > 0:
@@ -184,6 +199,7 @@ def _card_html(entry: OfferEntry) -> str:
       <div style="margin-top:14px">{preco_line}</div>
       {promo_html}
       {curve_html}
+      {medida_html}
       <div style="font-size:14px;color:#333;margin-top:10px;line-height:1.6">
         {"<br>".join(lines_meta)}
       </div>

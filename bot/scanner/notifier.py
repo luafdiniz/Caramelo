@@ -14,12 +14,46 @@ from __future__ import annotations
 
 import html
 import os
+import re
 from typing import Optional
 
 from lib import telegram_client
 from scanner.config import AlertaConfig
 from scanner.rules import Verdict
 from scanner.scrapers.base import ProductResult
+
+
+# Group-based promo patterns:
+#   "50% no 2°" / "no 3o" / "no 4°" — ordinal marker
+#   "compre 3 leve 4" — "leve N" clause
+# Purposely NOT matching "5 off" / "acima R$ 50" — the ordinal marker
+# ([º°]) and the explicit "leve" keyword avoid falso-positivos.
+_PROMO_GROUP_RE = re.compile(
+    r'\bno\s+(\d+)\s*[º°]|leve\s+(\d+)',
+    re.IGNORECASE,
+)
+
+
+def _detect_promo_group(promo_name: str) -> int:
+    """Return the group size (2, 3, ...) for pair/trio-style promos.
+
+    Handles: "50% no 2°", "10% no 3°", "compre 3 leve 4".
+    Returns 0 when the promo isn't group-based (e.g. "10% off", "R$ 5 off").
+    """
+    if not promo_name:
+        return 0
+    m = _PROMO_GROUP_RE.search(promo_name)
+    if not m:
+        return 0
+    for g in m.groups():
+        if g:
+            try:
+                n = int(g)
+                if 2 <= n <= 20:
+                    return n
+            except ValueError:
+                continue
+    return 0
 
 
 _SITE_LABEL = {
@@ -82,17 +116,22 @@ def build_message(
         "",
     ]
 
-    # If there's a promo AND we have the 2-unit point in the curve, the
-    # per-unit price at qtde=2 is the "promo effect isolated from freight" —
-    # highly readable for the "50% no 2°" pattern.
+    # Promo callout — text depends on the type of promo:
+    #  - "no 2°" / "no 3°" / "compre X leve Y": show the group price/un
+    #  - anything else (10% off, R$ X off, progressive): just the name
     if produto.promocoes:
         promo_str = ", ".join(produto.promocoes)
-        promo_row = next((c for c in produto.frete_curve if c["qtde"] == 2), None)
-        if promo_row:
-            preco_produto_2un = (promo_row["preco_produto_com_desconto"]) / 2
+        group_size = _detect_promo_group(promo_str)
+        promo_row = None
+        if group_size:
+            promo_row = next((c for c in produto.frete_curve if c["qtde"] == group_size), None)
+        if group_size and promo_row:
+            group_produto = promo_row["preco_produto_com_desconto"]
+            preco_produto_por_un = group_produto / group_size
+            group_label = "em pares" if group_size == 2 else f"em grupos de {group_size}"
             lines.append(
-                f"🎁 Promoção <b>{_esc(promo_str)}</b>: em pares "
-                f"<b>{_fmt_brl(preco_produto_2un)}</b>/un só o produto"
+                f"🎁 Promoção <b>{_esc(promo_str)}</b>: {group_label} "
+                f"<b>{_fmt_brl(preco_produto_por_un)}</b>/un só o produto"
             )
         else:
             lines.append(f"🎁 Promoção ativa: <b>{_esc(promo_str)}</b>")
@@ -121,6 +160,15 @@ def build_message(
         if zeros:
             first_zero = min(zeros, key=lambda p: p["qtde"])
             lines.append(f"💡 Frete zera a partir de <b>{first_zero['qtde']}</b> {emb_word_pl}")
+
+    # R$ por medida base (kg/L) — só se o título tinha peso/volume detectável
+    if produto.medida_valor > 0 and produto.medida_unidade:
+        preco_final = produto.preco_unidade_com_frete or produto.preco_unidade
+        preco_por_medida = preco_final / produto.medida_valor
+        lines.append(
+            f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{produto.medida_unidade} "
+            f"(no carrinho de {produto.bulk_qtde} {emb_word if produto.bulk_qtde == 1 else emb_word_pl})"
+        )
 
     if verdict.severity == "alvo":
         if verdict.savings is not None and verdict.savings > 0:

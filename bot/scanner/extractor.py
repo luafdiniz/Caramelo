@@ -155,6 +155,46 @@ def matches_search_intent(termo: str, titulo: str) -> bool:
     return coverage >= _MIN_WORD_COVERAGE
 
 
+_MEDIDA_PATTERN = re.compile(
+    r'(\d+(?:[.,]\d+)?)\s*(kg|g|l|ml|litros?)\b',
+    re.IGNORECASE,
+)
+
+
+def extract_medida(titulo: str) -> tuple[float, str]:
+    """Extract the first weight/volume spec from a product title.
+
+    Returns (value_in_base_unit, base_unit_name) where base is 'kg' for
+    weights and 'l' for volumes, so different pack sizes are comparable:
+        "5kg"   → (5.0,   'kg')
+        "500g"  → (0.5,   'kg')
+        "1L"    → (1.0,   'l')
+        "395g"  → (0.395, 'kg')
+        "220ml" → (0.22,  'l')
+
+    Returns (0.0, "") when nothing matches.
+    """
+    if not titulo:
+        return 0.0, ""
+    m = _MEDIDA_PATTERN.search(titulo)
+    if not m:
+        return 0.0, ""
+    try:
+        val = float(m.group(1).replace(",", "."))
+    except ValueError:
+        return 0.0, ""
+    unit = m.group(2).lower()
+    if unit == "g":
+        return val / 1000.0, "kg"
+    if unit == "kg":
+        return val, "kg"
+    if unit == "ml":
+        return val / 1000.0, "l"
+    if unit.startswith("l"):
+        return val, "l"
+    return 0.0, ""
+
+
 def preco_por_unidade(preco_total: float, qtde_unidades: int) -> float:
     """Divide the listing price by units in the package.
 

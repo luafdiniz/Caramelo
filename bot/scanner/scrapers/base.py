@@ -36,3 +36,7 @@ class ProductResult:
     # Names of active promotional teasers (e.g. "50% no 2°"). Empty when
     # the shelf has no conditional promo.
     promocoes: list[str] = field(default_factory=list)
+    # Base measure extracted from the title (e.g. 0.395kg from "395g").
+    # Enables displaying "R$/kg" alongside "R$/un".
+    medida_valor: float = 0.0
+    medida_unidade: str = ""
