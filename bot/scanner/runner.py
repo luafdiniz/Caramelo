@@ -54,10 +54,11 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
 
     seller = produto.seller_id or "1"
 
-    # Baseline simulation on bulk_qtde — used to estimate the free-shipping
-    # breakpoint AND reused inside the final curve (so we save one HTTP call).
-    bulk_sim = None
+    # First pass: simulate the bulk_qtde cart just to learn the effective
+    # per-unit rate after promotional discounts. We keep this result and
+    # feed it into the final curve so we don't call the same qtde twice.
     threshold = frete_overrides.get_free_threshold(produto.site)
+    bulk_sim = None
     if threshold and produto.preco > 0:
         bulk_sim = frete_mod.simulate_cart(
             produto.site, produto.sku_id, produto.bulk_qtde, seller_id=seller,
@@ -72,9 +73,14 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
             extras.append(breakpoint_est + 1)
 
     grid_qs = frete_mod.default_grid(produto.bulk_qtde, extra=extras)
+    # Skip bulk_qtde in the curve call — we already have bulk_sim from above.
+    remaining_qs = [q for q in grid_qs if q != produto.bulk_qtde] if bulk_sim else grid_qs
     sims = frete_mod.simulate_curve(
-        produto.site, produto.sku_id, seller_id=seller, quantities=grid_qs,
+        produto.site, produto.sku_id, seller_id=seller, quantities=remaining_qs,
     )
+    if bulk_sim:
+        sims.append(bulk_sim)
+        sims.sort(key=lambda s: s.quantity_used)
 
     unids_por_emb = produto.qtde_unidades if produto.qtde_unidades > 0 else 1
 

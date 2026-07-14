@@ -132,14 +132,18 @@ def _card_html(entry: OfferEntry) -> str:
             if is_free and prev_was_free:
                 continue
             prev_was_free = is_free
-            free_tag = ("<span style='color:#2e7d32;font-weight:600'>sem frete</span>"
-                        if is_free else "")
+            if is_free:
+                aux = "<span style='color:#2e7d32;font-weight:600'>sem frete</span>"
+            elif q == 1 and frete_v > 0:
+                aux = f"<span style='color:#888'>{_fmt_brl(p.preco)} + {_fmt_brl(frete_v)} frete</span>"
+            else:
+                aux = ""
             label = f"{q} {emb_word_pl if q > 1 else ('embalagem' if p.qtde_unidades > 1 else 'unidade')}"
             rows.append(
                 f"<tr>"
                 f"<td style='padding:4px 8px;color:#555;font-size:13px'>{label}</td>"
                 f"<td style='padding:4px 8px;font-weight:600;font-size:14px'>{_fmt_brl(unid)}/un</td>"
-                f"<td style='padding:4px 8px;font-size:12px'>{free_tag}</td>"
+                f"<td style='padding:4px 8px;font-size:12px'>{aux}</td>"
                 f"</tr>"
             )
         curve_html = (
@@ -162,7 +166,8 @@ def _card_html(entry: OfferEntry) -> str:
         preco_por_medida = preco_final / p.medida_valor
         medida_html = (
             f"<div style='margin-top:8px;font-size:13px;color:#333'>"
-            f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{p.medida_unidade}</div>"
+            f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{p.medida_unidade}"
+            f"</div>"
         )
 
     lines_meta = []

@@ -155,7 +155,13 @@ def build_message(
             prev_was_free = is_free
             free_tag = "  ✓ sem frete" if is_free else ""
             label = f"{q} {emb_word if q == 1 else emb_word_pl}"
-            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un{free_tag}")
+            # For qtde=1 show the decomposition so the reader doesn't see
+            # "R$ 27,89/un" and think the product costs R$ 27,89.
+            if q == 1 and pt["frete"] > 0:
+                extra = f"  ({_fmt_brl(produto.preco)} produto + {_fmt_brl(pt['frete'])} frete)"
+            else:
+                extra = ""
+            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un{free_tag}{extra}")
         zeros = [pt for pt in produto.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
         if zeros:
             first_zero = min(zeros, key=lambda p: p["qtde"])
@@ -165,10 +171,7 @@ def build_message(
     if produto.medida_valor > 0 and produto.medida_unidade:
         preco_final = produto.preco_unidade_com_frete or produto.preco_unidade
         preco_por_medida = preco_final / produto.medida_valor
-        lines.append(
-            f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{produto.medida_unidade} "
-            f"(no carrinho de {produto.bulk_qtde} {emb_word if produto.bulk_qtde == 1 else emb_word_pl})"
-        )
+        lines.append(f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{produto.medida_unidade}")
 
     if verdict.severity == "alvo":
         if verdict.savings is not None and verdict.savings > 0:
