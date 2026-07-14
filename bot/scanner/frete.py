@@ -233,11 +233,10 @@ def simulate_curve(
 
 
 def default_grid(qtde_bulk: int, extra: list[int] | None = None) -> list[int]:
-    """Grid centered on the natural pack size. [1, bulk, bulk*2].
-    Callers can pass `extra` (e.g. the free-freight breakpoint) to include
-    additional points."""
+    """Grid centered on the natural pack size. [1, bulk] plus any `extras`
+    (e.g. 2 for promo isolation, breakpoint for free-freight)."""
     b = max(int(qtde_bulk or 1), 1)
-    grid = {1, b, b * 2}
+    grid = {1, b}
     for x in extra or []:
         if x and int(x) >= 1:
             grid.add(int(x))

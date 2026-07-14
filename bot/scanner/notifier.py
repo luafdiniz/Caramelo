@@ -82,26 +82,35 @@ def build_message(
         "",
     ]
 
+    # If there's a promo AND we have the 2-unit point in the curve, the
+    # per-unit price at qtde=2 is the "promo effect isolated from freight" —
+    # highly readable for the "50% no 2°" pattern.
     if produto.promocoes:
-        lines.append(f"🎁 Promoção ativa: <b>{_esc(', '.join(produto.promocoes))}</b>")
+        promo_str = ", ".join(produto.promocoes)
+        promo_row = next((c for c in produto.frete_curve if c["qtde"] == 2), None)
+        if promo_row:
+            preco_produto_2un = (promo_row["preco_produto_com_desconto"]) / 2
+            lines.append(
+                f"🎁 Promoção <b>{_esc(promo_str)}</b>: em pares "
+                f"<b>{_fmt_brl(preco_produto_2un)}</b>/un só o produto"
+            )
+        else:
+            lines.append(f"🎁 Promoção ativa: <b>{_esc(promo_str)}</b>")
         lines.append("")
 
-    # Freight curve — most useful visual: what does buying-more do?
+    # Freight curve: how much you actually pay per unit at each cart size.
+    # Deliberately simple — no "promo −R$ X" breakdown here since we already
+    # isolated the promo above. This table is just total-paid divided by units.
     if produto.frete_curve:
-        lines.append("")
-        lines.append("<b>📦 Quanto pagar por unidade dependendo do carrinho:</b>")
+        lines.append("<b>📦 Total pago por unidade (produto + frete):</b>")
         emb_word = "embalagem" if produto.qtde_unidades > 1 else "unidade"
         emb_word_pl = "embalagens" if produto.qtde_unidades > 1 else "unidades"
         for pt in produto.frete_curve:
             q = pt["qtde"]
-            frete_v = pt["frete"]
             unid = pt["preco_unid_delivered"]
-            desconto = pt.get("desconto", 0)
+            free_tag = "  ✓ sem frete" if pt["frete"] == 0 and q > 1 else ""
             label = f"{q} {emb_word if q == 1 else emb_word_pl}"
-            frete_tag = "✓ frete grátis" if frete_v == 0 and q > 1 else f"frete {_fmt_brl(frete_v)}"
-            promo_tag = f", promo −{_fmt_brl(-desconto)}" if desconto and desconto < -0.01 else ""
-            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un  ({frete_tag}{promo_tag})")
-        # Highlight the free-shipping breakpoint (grid point that hits R$ 0)
+            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un{free_tag}")
         zeros = [pt for pt in produto.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
         if zeros:
             first_zero = min(zeros, key=lambda p: p["qtde"])

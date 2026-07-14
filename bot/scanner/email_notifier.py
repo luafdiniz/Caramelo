@@ -94,6 +94,26 @@ def _card_html(entry: OfferEntry) -> str:
         f" <span style='color:#666'>por unidade comprando {label_qtde} {unids}embalagens</span>"
     )
 
+    # Promo callout (isolated from freight — same idea as Telegram)
+    promo_html = ""
+    if p.promocoes:
+        promo_str = ", ".join(p.promocoes)
+        promo_row = next((c for c in p.frete_curve if c["qtde"] == 2), None)
+        if promo_row:
+            preco_produto_2un = promo_row["preco_produto_com_desconto"] / 2
+            promo_html = (
+                f"<div style='margin-top:10px;padding:10px 12px;background:#fff8e1;"
+                f"border-radius:6px;font-size:13px;color:#5a4200'>"
+                f"🎁 Promoção <b>{_esc(promo_str)}</b>: em pares "
+                f"<b>{_fmt_brl(preco_produto_2un)}</b>/un só o produto</div>"
+            )
+        else:
+            promo_html = (
+                f"<div style='margin-top:10px;padding:10px 12px;background:#fff8e1;"
+                f"border-radius:6px;font-size:13px;color:#5a4200'>"
+                f"🎁 Promoção ativa: <b>{_esc(promo_str)}</b></div>"
+            )
+
     curve_html = ""
     if p.frete_curve:
         emb_word_pl = "embalagens" if p.qtde_unidades > 1 else "unidades"
@@ -102,19 +122,19 @@ def _card_html(entry: OfferEntry) -> str:
             q = pt["qtde"]
             frete_v = pt["frete"]
             unid = pt["preco_unid_delivered"]
-            frete_tag = "<span style='color:#2e7d32;font-weight:600'>frete grátis</span>" \
-                if frete_v == 0 and q > 1 else f"frete {_fmt_brl(frete_v)}"
+            free_tag = ("<span style='color:#2e7d32;font-weight:600'>sem frete</span>"
+                        if frete_v == 0 and q > 1 else "")
             label = f"{q} {emb_word_pl if q > 1 else ('embalagem' if p.qtde_unidades > 1 else 'unidade')}"
             rows.append(
                 f"<tr>"
                 f"<td style='padding:4px 8px;color:#555;font-size:13px'>{label}</td>"
                 f"<td style='padding:4px 8px;font-weight:600;font-size:14px'>{_fmt_brl(unid)}/un</td>"
-                f"<td style='padding:4px 8px;color:#888;font-size:12px'>{frete_tag}</td>"
+                f"<td style='padding:4px 8px;font-size:12px'>{free_tag}</td>"
                 f"</tr>"
             )
         curve_html = (
             f"<div style='margin-top:12px;font-size:13px;color:#333;font-weight:600'>"
-            f"📦 Preço/un dependendo do carrinho:</div>"
+            f"📦 Total pago por unidade (produto + frete):</div>"
             f"<table style='margin-top:6px;border-collapse:collapse'>{''.join(rows)}</table>"
         )
         zeros = [pt for pt in p.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
@@ -122,7 +142,7 @@ def _card_html(entry: OfferEntry) -> str:
             first_zero = min(zeros, key=lambda x: x["qtde"])
             curve_html += (
                 f"<div style='margin-top:6px;color:#2e7d32;font-size:13px;font-weight:600'>"
-                f"💡 A partir de {first_zero['qtde']} {emb_word_pl} o frete zera</div>"
+                f"💡 Frete zera a partir de {first_zero['qtde']} {emb_word_pl}</div>"
             )
 
     lines_meta = []
@@ -157,6 +177,7 @@ def _card_html(entry: OfferEntry) -> str:
       <div style="font-size:18px;color:#111;margin-top:4px;font-weight:600">{nome}</div>
       <div style="font-size:13px;color:#888;margin-top:2px">{titulo}</div>
       <div style="margin-top:14px">{preco_line}</div>
+      {promo_html}
       {curve_html}
       <div style="font-size:14px;color:#333;margin-top:10px;line-height:1.6">
         {"<br>".join(lines_meta)}

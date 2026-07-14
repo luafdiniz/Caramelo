@@ -54,9 +54,12 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
 
     seller = produto.seller_id or "1"
 
-    # Add the exact free-freight breakpoint to the grid when the store has
-    # a known threshold (e.g. Supernosso R$ 500 → 63 latas at R$ 7,99).
-    extras: list[int] = []
+    # Grid picks:
+    #  - 1 (baseline)
+    #  - 2 (isolates the promo, no bulk effect)
+    #  - qtde_bulk (natural pack)
+    #  - free-shipping breakpoint if known
+    extras: list[int] = [2]
     threshold = frete_overrides.get_free_threshold(produto.site)
     if threshold and produto.preco > 0:
         breakpoint_qtde = math.ceil(threshold / produto.preco)
