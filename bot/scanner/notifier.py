@@ -82,39 +82,37 @@ def build_message(
         "",
     ]
 
-    lines.append(f"💰 <b>{_fmt_brl(produto.preco_unidade_com_frete or produto.preco_unidade)}</b> por unidade")
+    # Nominal per-unit is what's on the shelf label, before freight
+    nominal_unid = produto.preco / max(produto.qtde_unidades, 1)
+    lines.append(f"💰 <b>{_fmt_brl(nominal_unid)}</b> por unidade (nominal)")
 
-    # Freight breakdown (only when we actually consulted frete)
-    if produto.preco_com_frete > 0:
-        prazo = f" • {_esc(produto.frete_prazo_dias)} dias úteis" if produto.frete_prazo_dias else ""
-        if produto.bulk_qtde > 1:
-            emb = produto.qtde_unidades
-            total_unids = emb * produto.bulk_qtde
-            lines.append(
-                f"📦 Comprando {produto.bulk_qtde} embalagens"
-                + (f" (= {total_unids}un)" if emb > 1 else "")
-                + f": produto {_fmt_brl(produto.preco * produto.bulk_qtde)} "
-                + f"+ frete {_fmt_brl(produto.frete)} = "
-                + f"<b>{_fmt_brl(produto.preco_com_frete)}</b>{prazo}"
-            )
-            if produto.preco_com_frete_1un and produto.preco_unidade_com_frete_1un > produto.preco_unidade_com_frete:
-                lines.append(
-                    f"↪️ Comprando 1 embalagem: {_fmt_brl(produto.preco_unidade_com_frete_1un)}/un "
-                    f"(frete {_fmt_brl(produto.frete_1un)}) — comprar em volume dilui"
-                )
-        else:
-            lines.append(
-                f"📦 Produto {_fmt_brl(produto.preco)} + frete {_fmt_brl(produto.frete)} = "
-                f"<b>{_fmt_brl(produto.preco_com_frete)}</b>{prazo}"
-            )
+    # Freight curve — most useful visual: what does buying-more do?
+    if produto.frete_curve:
+        lines.append("")
+        lines.append("<b>📦 Quanto pagar por unidade dependendo do carrinho:</b>")
+        emb_word = "embalagem" if produto.qtde_unidades > 1 else "unidade"
+        emb_word_pl = "embalagens" if produto.qtde_unidades > 1 else "unidades"
+        for pt in produto.frete_curve:
+            q = pt["qtde"]
+            frete_v = pt["frete"]
+            unid = pt["preco_unid_delivered"]
+            label = f"{q} {emb_word if q == 1 else emb_word_pl}"
+            frete_tag = "✓ frete grátis" if frete_v == 0 and q > 1 else f"frete {_fmt_brl(frete_v)}"
+            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un  ({frete_tag})")
+        # Highlight the free-shipping breakpoint
+        zeros = [pt for pt in produto.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
+        if zeros:
+            first_zero = min(zeros, key=lambda p: p["qtde"])
+            lines.append(f"💡 A partir de {first_zero['qtde']} {emb_word_pl} o frete zera")
 
     if verdict.baseline is not None:
-        lines.append(f"📊 Preço habitual: {_fmt_brl(verdict.baseline)} por unidade")
+        lines.append("")
+        lines.append(f"📊 Preço habitual (com frete): {_fmt_brl(verdict.baseline)} por unidade")
     elif verdict.ultimo_preco is not None:
         lines.append(f"📊 Último preço: {_fmt_brl(verdict.ultimo_preco)} por unidade")
 
     if verdict.savings is not None and verdict.savings > 0:
-        lines.append(f"💸 Você economiza {_fmt_brl(verdict.savings)} por unidade")
+        lines.append(f"💸 Você economiza {_fmt_brl(verdict.savings)} por unidade vs. habitual")
 
     lines.append(f"📍 {_esc(site_label)}")
 

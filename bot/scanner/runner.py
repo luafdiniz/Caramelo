@@ -51,29 +51,44 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
         return produto
 
     seller = produto.seller_id or "1"
-    one, bulk = frete_mod.estimate_with_bulk(
-        produto.site, produto.sku_id, seller_id=seller,
-        qtde_bulk=produto.bulk_qtde,
+    grid_qs = frete_mod.default_grid(produto.bulk_qtde)
+    curve_pts = frete_mod.estimate_curve(
+        produto.site, produto.sku_id, seller_id=seller, quantities=grid_qs,
     )
 
-    # qtde=1 comparison values
-    produto.frete_1un = one.valor
-    produto.preco_com_frete_1un = round(produto.preco + one.valor, 2)
     unids_por_emb = produto.qtde_unidades if produto.qtde_unidades > 0 else 1
-    produto.preco_unidade_com_frete_1un = round(
-        produto.preco_com_frete_1un / unids_por_emb, 4
-    )
 
-    # Bulk cart (realistic — that's what the buyer would order)
-    produto.frete = bulk.valor
-    produto.frete_prazo_dias = bulk.prazo or one.prazo or ""
-    total_produto_bulk = produto.preco * produto.bulk_qtde
-    produto.preco_com_frete = round(total_produto_bulk + bulk.valor, 2)
-    total_unids = unids_por_emb * produto.bulk_qtde
-    produto.preco_unidade_com_frete = round(produto.preco_com_frete / total_unids, 4)
+    # Fill the curve dicts with derived per-unit delivered prices
+    curve_dicts: list[dict] = []
+    for pt in curve_pts:
+        total_produto = produto.preco * pt.quantity_used
+        preco_total = round(total_produto + pt.valor, 2)
+        total_unids = unids_por_emb * pt.quantity_used
+        preco_unid = round(preco_total / total_unids, 4) if total_unids else preco_total
+        curve_dicts.append({
+            "qtde": pt.quantity_used,
+            "frete": pt.valor,
+            "preco_total": preco_total,
+            "preco_unid_delivered": preco_unid,
+            "prazo": pt.prazo,
+        })
+    produto.frete_curve = curve_dicts
 
-    # Downstream rules key off preco_unidade — swap in the bulk delivered
-    # unit price so classify() operates on the realistic cart.
+    # Extract the 1-unit and bulk points from the curve (may be same qtde=1)
+    by_q = {c["qtde"]: c for c in curve_dicts}
+
+    one = by_q.get(1) or curve_dicts[0]
+    produto.frete_1un = one["frete"]
+    produto.preco_com_frete_1un = one["preco_total"]
+    produto.preco_unidade_com_frete_1un = one["preco_unid_delivered"]
+
+    bulk = by_q.get(produto.bulk_qtde) or curve_dicts[-1]
+    produto.frete = bulk["frete"]
+    produto.frete_prazo_dias = bulk.get("prazo") or one.get("prazo") or ""
+    produto.preco_com_frete = bulk["preco_total"]
+    produto.preco_unidade_com_frete = bulk["preco_unid_delivered"]
+
+    # Downstream rules key off preco_unidade — use the bulk delivered value.
     produto.preco_unidade = produto.preco_unidade_com_frete
     return produto
 

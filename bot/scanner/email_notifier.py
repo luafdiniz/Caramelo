@@ -82,37 +82,50 @@ def _card_html(entry: OfferEntry) -> str:
     titulo = _esc(entry.produto.titulo[:120])
 
     p = entry.produto
-    preco_unid = p.preco_unidade_com_frete or p.preco_unidade
+    nominal_unid = p.preco / max(p.qtde_unidades, 1)
     preco_line = (
-        f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_unid)}</b>"
-        f" <span style='color:#666'>por unidade</span>"
+        f"<b style='font-size:22px;color:#111'>{_fmt_brl(nominal_unid)}</b>"
+        f" <span style='color:#666'>por unidade (nominal)</span>"
     )
 
+    curve_html = ""
+    if p.frete_curve:
+        emb_word_pl = "embalagens" if p.qtde_unidades > 1 else "unidades"
+        rows = []
+        for pt in p.frete_curve:
+            q = pt["qtde"]
+            frete_v = pt["frete"]
+            unid = pt["preco_unid_delivered"]
+            frete_tag = "<span style='color:#2e7d32;font-weight:600'>frete grátis</span>" \
+                if frete_v == 0 and q > 1 else f"frete {_fmt_brl(frete_v)}"
+            label = f"{q} {emb_word_pl if q > 1 else ('embalagem' if p.qtde_unidades > 1 else 'unidade')}"
+            rows.append(
+                f"<tr>"
+                f"<td style='padding:4px 8px;color:#555;font-size:13px'>{label}</td>"
+                f"<td style='padding:4px 8px;font-weight:600;font-size:14px'>{_fmt_brl(unid)}/un</td>"
+                f"<td style='padding:4px 8px;color:#888;font-size:12px'>{frete_tag}</td>"
+                f"</tr>"
+            )
+        curve_html = (
+            f"<div style='margin-top:12px;font-size:13px;color:#333;font-weight:600'>"
+            f"📦 Preço/un dependendo do carrinho:</div>"
+            f"<table style='margin-top:6px;border-collapse:collapse'>{''.join(rows)}</table>"
+        )
+        zeros = [pt for pt in p.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
+        if zeros:
+            first_zero = min(zeros, key=lambda x: x["qtde"])
+            curve_html += (
+                f"<div style='margin-top:6px;color:#2e7d32;font-size:13px;font-weight:600'>"
+                f"💡 A partir de {first_zero['qtde']} {emb_word_pl} o frete zera</div>"
+            )
+
     lines_meta = []
-    if p.preco_com_frete > 0:
-        prazo = f" • {_esc(p.frete_prazo_dias)} dias úteis" if p.frete_prazo_dias else ""
-        if p.bulk_qtde > 1:
-            emb_line = f"{p.bulk_qtde} embalagens" + (f" (= {p.qtde_unidades * p.bulk_qtde} unidades)" if p.qtde_unidades > 1 else "")
-            lines_meta.append(
-                f"📦 Comprando {emb_line}: produto <b>{_fmt_brl(p.preco * p.bulk_qtde)}</b> "
-                f"+ frete <b>{_fmt_brl(p.frete)}</b> = <b>{_fmt_brl(p.preco_com_frete)}</b>{prazo}"
-            )
-            if p.preco_com_frete_1un and p.preco_unidade_com_frete_1un > p.preco_unidade_com_frete:
-                lines_meta.append(
-                    f"↪️ Comprando 1 embalagem: {_fmt_brl(p.preco_unidade_com_frete_1un)}/un "
-                    f"(frete {_fmt_brl(p.frete_1un)}) — comprar em volume dilui o frete"
-                )
-        else:
-            lines_meta.append(
-                f"📦 Produto <b>{_fmt_brl(p.preco)}</b> + "
-                f"frete <b>{_fmt_brl(p.frete)}</b> = <b>{_fmt_brl(p.preco_com_frete)}</b>{prazo}"
-            )
     if entry.verdict.baseline is not None:
-        lines_meta.append(f"📊 Preço habitual: <b>{_fmt_brl(entry.verdict.baseline)}</b> por unidade")
+        lines_meta.append(f"📊 Preço habitual (com frete): <b>{_fmt_brl(entry.verdict.baseline)}</b> por unidade")
     elif entry.verdict.ultimo_preco is not None:
         lines_meta.append(f"📊 Último preço: <b>{_fmt_brl(entry.verdict.ultimo_preco)}</b> por unidade")
     if entry.verdict.savings and entry.verdict.savings > 0:
-        lines_meta.append(f"💸 Você economiza <b>{_fmt_brl(entry.verdict.savings)}</b> por unidade")
+        lines_meta.append(f"💸 Você economiza <b>{_fmt_brl(entry.verdict.savings)}</b> por unidade vs. habitual")
 
     flags_html = ""
     if entry.produto.tem_oferta_clube:
@@ -135,6 +148,7 @@ def _card_html(entry: OfferEntry) -> str:
       <div style="font-size:18px;color:#111;margin-top:4px;font-weight:600">{nome}</div>
       <div style="font-size:13px;color:#888;margin-top:2px">{titulo}</div>
       <div style="margin-top:14px">{preco_line}</div>
+      {curve_html}
       <div style="font-size:14px;color:#333;margin-top:10px;line-height:1.6">
         {"<br>".join(lines_meta)}
       </div>

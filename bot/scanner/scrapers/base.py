@@ -1,6 +1,6 @@
 """Shared types across scrapers."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -29,3 +29,7 @@ class ProductResult:
     frete_1un: float = 0.0
     preco_com_frete_1un: float = 0.0
     preco_unidade_com_frete_1un: float = 0.0
+    # Freight curve: list of {"qtde", "frete", "preco_unid_delivered"} dicts,
+    # sorted by qtde. Enables the "how much do I need to buy to zero the
+    # freight?" breakdown in notifications.
+    frete_curve: list[dict] = field(default_factory=list)

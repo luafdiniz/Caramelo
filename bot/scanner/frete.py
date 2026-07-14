@@ -148,15 +148,36 @@ def estimate_with_bulk(
     qtde_bulk: int,
     cep: Optional[str] = None,
 ) -> tuple[FreteResult, FreteResult]:
-    """Return (frete_1un, frete_bulk).
-
-    Rationale: same product may cost R$ 20 shipping for 1 unit but R$ 0 for
-    100 (free-shipping threshold reached). Callers show both and let the
-    user decide if buying in bulk is worth it.
-    """
+    """Return (frete_1un, frete_bulk). Cheap two-point check."""
     one = _simulate(site_key, sku_id, 1, seller_id, cep=cep) or (0.0, "")
     bulk = _simulate(site_key, sku_id, max(qtde_bulk, 1), seller_id, cep=cep) or (0.0, "")
     return (
         FreteResult(valor=one[0], prazo=one[1], quantity_used=1),
         FreteResult(valor=bulk[0], prazo=bulk[1], quantity_used=max(qtde_bulk, 1)),
     )
+
+
+def estimate_curve(
+    site_key: str,
+    sku_id: str,
+    seller_id: str,
+    quantities: list[int],
+    cep: Optional[str] = None,
+) -> list[FreteResult]:
+    """Simulate freight at several cart sizes so callers can render a curve
+    and highlight the break-point where freight zeroes (or dilutes below
+    some threshold). Deduped & sorted, guaranteed ≥1.
+    """
+    qs = sorted({max(int(q), 1) for q in quantities})
+    out: list[FreteResult] = []
+    for q in qs:
+        sim = _simulate(site_key, sku_id, q, seller_id, cep=cep) or (0.0, "")
+        out.append(FreteResult(valor=sim[0], prazo=sim[1], quantity_used=q))
+    return out
+
+
+def default_grid(qtde_bulk: int) -> list[int]:
+    """Sensible 4-point grid centered on the scanner's bulk_qtde.
+    [1, bulk/4, bulk, bulk*2] with dedup and floor of 1."""
+    b = max(int(qtde_bulk or 1), 1)
+    return sorted({1, max(b // 4, 1), b, b * 2})
