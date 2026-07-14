@@ -86,6 +86,9 @@ def build_message(
     nominal_unid = produto.preco / max(produto.qtde_unidades, 1)
     lines.append(f"💰 <b>{_fmt_brl(nominal_unid)}</b> por unidade (nominal)")
 
+    if produto.promocoes:
+        lines.append(f"🎁 Promoção ativa: <b>{_esc(', '.join(produto.promocoes))}</b>")
+
     # Freight curve — most useful visual: what does buying-more do?
     if produto.frete_curve:
         lines.append("")
@@ -96,9 +99,11 @@ def build_message(
             q = pt["qtde"]
             frete_v = pt["frete"]
             unid = pt["preco_unid_delivered"]
+            desconto = pt.get("desconto", 0)
             label = f"{q} {emb_word if q == 1 else emb_word_pl}"
             frete_tag = "✓ frete grátis" if frete_v == 0 and q > 1 else f"frete {_fmt_brl(frete_v)}"
-            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un  ({frete_tag})")
+            promo_tag = f", promo −{_fmt_brl(-desconto)}" if desconto and desconto < -0.01 else ""
+            lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un  ({frete_tag}{promo_tag})")
         # Highlight the free-shipping breakpoint
         zeros = [pt for pt in produto.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
         if zeros:

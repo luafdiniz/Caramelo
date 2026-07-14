@@ -42,6 +42,18 @@ class FreteResult:
     quantity_used: int
 
 
+@dataclass
+class SimulationResult:
+    """Full result of one orderForms/simulation call for N units."""
+    quantity_used: int
+    frete: float                  # R$
+    prazo: str
+    total_produto: float          # after promo discounts (before freight)
+    total_descontos: float        # R$ (negative), promo effect
+    total_final: float            # total_produto + frete
+    total_bruto: float            # sum of listPrices — pre-promo
+
+
 def _cep() -> str:
     return os.environ.get("CEP_ENTREGA", "31140500").strip().replace("-", "")
 
@@ -96,8 +108,36 @@ def _best_sla(data: dict) -> tuple[float, str]:
     return best_price, best_days
 
 
+def _extract_totals(data: dict) -> tuple[float, float, float]:
+    """Return (produto_com_desconto, desconto, bruto). Reads Sum-of-sellingPrice
+    per line item and cross-checks with the top-level 'totals' array.
+    """
+    items = data.get("items", []) or []
+    total_bruto = 0.0
+    total_com_desconto = 0.0
+    for item in items:
+        list_price = float(item.get("listPrice") or item.get("price") or 0) / 100.0
+        q = int(item.get("quantity") or 0) or 1
+        total_bruto += list_price * q
+        pd = item.get("priceDefinition") or {}
+        line_total = float(pd.get("total") or 0) / 100.0
+        if line_total:
+            total_com_desconto += line_total
+        else:
+            total_com_desconto += float(item.get("sellingPrice") or 0) / 100.0 * q
+
+    # Prefer explicit totals[Discounts] if present — more reliable than
+    # inferring from line items when the API splits promos across lines.
+    for t in data.get("totals", []) or []:
+        if t.get("id") == "Discounts":
+            desconto = float(t.get("value") or 0) / 100.0
+            return round(total_bruto + desconto, 2), round(desconto, 2), round(total_bruto, 2)
+
+    return round(total_com_desconto, 2), round(total_com_desconto - total_bruto, 2), round(total_bruto, 2)
+
+
 def _simulate(site_key: str, sku_id: str, quantity: int, seller_id: str,
-              cep: Optional[str] = None) -> Optional[tuple[float, str]]:
+              cep: Optional[str] = None) -> Optional[SimulationResult]:
     hostname = HOSTNAMES.get(site_key)
     if not hostname or not sku_id:
         return None
@@ -116,14 +156,23 @@ def _simulate(site_key: str, sku_id: str, quantity: int, seller_id: str,
                 time.sleep(1.0)
                 continue
             return None
-        # Empty items = upstream declined the cart (SKU not deliverable?)
         if not data.get("items"):
             print(f"frete {site_key}/{sku_id} q={quantity}: empty items in response")
             if attempt < _RETRIES:
                 time.sleep(1.0)
                 continue
             return None
-        return _best_sla(data)
+        frete_val, prazo = _best_sla(data)
+        prod_com_desc, desconto, bruto = _extract_totals(data)
+        return SimulationResult(
+            quantity_used=quantity,
+            frete=frete_val,
+            prazo=prazo,
+            total_produto=prod_com_desc,
+            total_descontos=desconto,
+            total_final=round(prod_com_desc + frete_val, 2),
+            total_bruto=bruto,
+        )
     return None
 
 
@@ -138,46 +187,45 @@ def estimate_vtex(
     result = _simulate(site_key, sku_id, quantity, seller_id, cep=cep)
     if result is None:
         return 0.0, ""
-    return result
+    return result.frete, result.prazo
 
 
-def estimate_with_bulk(
+def simulate_cart(
     site_key: str,
     sku_id: str,
-    seller_id: str,
-    qtde_bulk: int,
+    quantity: int,
+    seller_id: str = "1",
     cep: Optional[str] = None,
-) -> tuple[FreteResult, FreteResult]:
-    """Return (frete_1un, frete_bulk). Cheap two-point check."""
-    one = _simulate(site_key, sku_id, 1, seller_id, cep=cep) or (0.0, "")
-    bulk = _simulate(site_key, sku_id, max(qtde_bulk, 1), seller_id, cep=cep) or (0.0, "")
-    return (
-        FreteResult(valor=one[0], prazo=one[1], quantity_used=1),
-        FreteResult(valor=bulk[0], prazo=bulk[1], quantity_used=max(qtde_bulk, 1)),
-    )
+) -> Optional[SimulationResult]:
+    """Full cart simulation — freight + promotions."""
+    return _simulate(site_key, sku_id, quantity, seller_id, cep=cep)
 
 
-def estimate_curve(
+def simulate_curve(
     site_key: str,
     sku_id: str,
     seller_id: str,
     quantities: list[int],
     cep: Optional[str] = None,
-) -> list[FreteResult]:
-    """Simulate freight at several cart sizes so callers can render a curve
-    and highlight the break-point where freight zeroes (or dilutes below
-    some threshold). Deduped & sorted, guaranteed ≥1.
-    """
+) -> list[SimulationResult]:
+    """Simulate the cart at each quantity — returns SimulationResult with
+    frete + total after promotional discounts. Callers use this to render
+    the price/un curve and highlight free-shipping breakpoints."""
     qs = sorted({max(int(q), 1) for q in quantities})
-    out: list[FreteResult] = []
+    out: list[SimulationResult] = []
     for q in qs:
-        sim = _simulate(site_key, sku_id, q, seller_id, cep=cep) or (0.0, "")
-        out.append(FreteResult(valor=sim[0], prazo=sim[1], quantity_used=q))
+        sim = _simulate(site_key, sku_id, q, seller_id, cep=cep)
+        if sim is None:
+            sim = SimulationResult(
+                quantity_used=q, frete=0.0, prazo="",
+                total_produto=0.0, total_descontos=0.0,
+                total_final=0.0, total_bruto=0.0,
+            )
+        out.append(sim)
     return out
 
 
 def default_grid(qtde_bulk: int) -> list[int]:
-    """Sensible 4-point grid centered on the scanner's bulk_qtde.
-    [1, bulk/4, bulk, bulk*2] with dedup and floor of 1."""
+    """Grid centered on the natural pack size. [1, bulk, bulk*2, bulk*4]."""
     b = max(int(qtde_bulk or 1), 1)
-    return sorted({1, max(b // 4, 1), b, b * 2})
+    return sorted({1, b, b * 2, b * 4})

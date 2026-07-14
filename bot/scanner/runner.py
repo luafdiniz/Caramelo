@@ -52,31 +52,30 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
 
     seller = produto.seller_id or "1"
     grid_qs = frete_mod.default_grid(produto.bulk_qtde)
-    curve_pts = frete_mod.estimate_curve(
+    sims = frete_mod.simulate_curve(
         produto.site, produto.sku_id, seller_id=seller, quantities=grid_qs,
     )
 
     unids_por_emb = produto.qtde_unidades if produto.qtde_unidades > 0 else 1
 
-    # Fill the curve dicts with derived per-unit delivered prices
+    # Build the curve dicts — total_produto here is AFTER promo discounts,
+    # so the delivered/un price already reflects "50% no 2°" and similar.
     curve_dicts: list[dict] = []
-    for pt in curve_pts:
-        total_produto = produto.preco * pt.quantity_used
-        preco_total = round(total_produto + pt.valor, 2)
-        total_unids = unids_por_emb * pt.quantity_used
-        preco_unid = round(preco_total / total_unids, 4) if total_unids else preco_total
+    for sim in sims:
+        total_unids = unids_por_emb * sim.quantity_used
+        preco_unid = round(sim.total_final / total_unids, 4) if total_unids else sim.total_final
         curve_dicts.append({
-            "qtde": pt.quantity_used,
-            "frete": pt.valor,
-            "preco_total": preco_total,
+            "qtde": sim.quantity_used,
+            "frete": sim.frete,
+            "preco_total": sim.total_final,
+            "preco_produto_com_desconto": sim.total_produto,
+            "desconto": sim.total_descontos,
             "preco_unid_delivered": preco_unid,
-            "prazo": pt.prazo,
+            "prazo": sim.prazo,
         })
     produto.frete_curve = curve_dicts
 
-    # Extract the 1-unit and bulk points from the curve (may be same qtde=1)
     by_q = {c["qtde"]: c for c in curve_dicts}
-
     one = by_q.get(1) or curve_dicts[0]
     produto.frete_1un = one["frete"]
     produto.preco_com_frete_1un = one["preco_total"]
@@ -88,7 +87,7 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
     produto.preco_com_frete = bulk["preco_total"]
     produto.preco_unidade_com_frete = bulk["preco_unid_delivered"]
 
-    # Downstream rules key off preco_unidade — use the bulk delivered value.
+    # Downstream rules key off preco_unidade — use the bulk delivered price.
     produto.preco_unidade = produto.preco_unidade_com_frete
     return produto
 

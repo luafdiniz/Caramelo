@@ -29,7 +29,10 @@ class ProductResult:
     frete_1un: float = 0.0
     preco_com_frete_1un: float = 0.0
     preco_unidade_com_frete_1un: float = 0.0
-    # Freight curve: list of {"qtde", "frete", "preco_unid_delivered"} dicts,
-    # sorted by qtde. Enables the "how much do I need to buy to zero the
-    # freight?" breakdown in notifications.
+    # Freight curve: list of {"qtde", "frete", "preco_unid_delivered", ...}
+    # dicts, sorted by qtde. Enables the "how much do I need to buy to zero
+    # the freight?" breakdown in notifications.
     frete_curve: list[dict] = field(default_factory=list)
+    # Names of active promotional teasers (e.g. "50% no 2°"). Empty when
+    # the shelf has no conditional promo.
+    promocoes: list[str] = field(default_factory=list)
