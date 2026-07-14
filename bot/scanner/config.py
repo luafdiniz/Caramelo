@@ -29,6 +29,7 @@ class AlertaConfig:
     ultima_verif: Optional[datetime]
     status: str
     snooze_ate: Optional[datetime]
+    qtde_bulk: int = 1
 
 
 def _parse_bool(v) -> bool:
@@ -69,14 +70,14 @@ def get_alertas(spreadsheet_id: str, service=None) -> list[AlertaConfig]:
     """Load every row of Scanner_Alertas, active or not."""
     service = service or sheets.get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A2:M"
+        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A2:N"
     ).execute()
     rows = result.get("values", [])
     out: list[AlertaConfig] = []
     for r in rows:
         if not r or not r[0]:
             continue
-        r = list(r) + [""] * (13 - len(r))
+        r = list(r) + [""] * (14 - len(r))
         sites_raw = r[4] or ""
         sites = [s.strip() for s in sites_raw.split(",") if s.strip() in VALID_SITES]
         out.append(AlertaConfig(
@@ -93,6 +94,7 @@ def get_alertas(spreadsheet_id: str, service=None) -> list[AlertaConfig]:
             ultima_verif=_parse_iso_datetime(r[10]),
             status=(r[11] or "").strip(),
             snooze_ate=_parse_iso_datetime(r[12]),
+            qtde_bulk=_parse_int(r[13], default=1),
         ))
     return out
 

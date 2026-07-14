@@ -10,7 +10,31 @@ Merged item shape (chronological, oldest → newest):
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from lib import sheets
+
+
+def _normalize_timestamp(raw) -> str:
+    """Convert a Google Sheets timestamp cell to an ISO string.
+
+    The cell may come back as:
+      - ISO string ("2026-07-14T12:16:00")  — pass through
+      - Date-serial float ("46217.51116" or "46217,51116")  — days since 1899-12-30
+      - Empty  — pass through
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    if "T" in s or "-" in s[:5]:
+        return s
+    normalized = s.replace(",", ".")
+    try:
+        serial = float(normalized)
+    except ValueError:
+        return s
+    base = datetime(1899, 12, 30)
+    return (base + timedelta(days=serial)).isoformat(timespec="seconds")
 
 
 def _load_compras(spreadsheet_id: str, insumo_id: str, service=None) -> list[dict]:
@@ -20,7 +44,7 @@ def _load_compras(spreadsheet_id: str, insumo_id: str, service=None) -> list[dic
         preco_un = c.get("preco_unitario") or 0
         if preco_un <= 0:
             continue
-        data = str(c.get("data") or "").strip()
+        data = _normalize_timestamp(c.get("data"))
         if not data:
             continue
         # Compras.data comes as YYYY-MM-DD; make it a full ISO datetime
@@ -42,7 +66,7 @@ def _load_scans(spreadsheet_id: str, scanner_id: str, service=None) -> list[dict
             continue
         out.append({
             "preco_unidade": float(pu),
-            "timestamp": s.get("timestamp") or "",
+            "timestamp": _normalize_timestamp(s.get("timestamp")),
             "source": "scan",
         })
     return out

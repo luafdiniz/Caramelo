@@ -33,27 +33,47 @@ from scanner.scrapers import mercadolivre, vtex
 from scanner.scrapers.base import ProductResult
 
 
-def _apply_frete(produto: ProductResult) -> ProductResult:
-    """Consult freight for this product, populate the *_com_frete fields
-    AND overwrite preco_unidade so downstream rules use the delivered
-    price. Degrades to preco (0 freight) on any error."""
+def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
+    """Consult freight for this product at BOTH qtde=1 (comparison) and
+    qtde=qtde_bulk (realistic cart). Populates all *_com_frete fields
+    and overwrites preco_unidade with the bulk delivered price so
+    downstream rules operate on the realistic cart cost."""
+    produto.bulk_qtde = max(int(qtde_bulk or 1), 1)
+
     if produto.site not in vtex.HOSTNAMES or not produto.sku_id:
-        # No freight source — treat frete=0
+        # No freight source available
         produto.frete = 0.0
         produto.preco_com_frete = produto.preco
         produto.preco_unidade_com_frete = produto.preco_unidade
+        produto.frete_1un = 0.0
+        produto.preco_com_frete_1un = produto.preco
+        produto.preco_unidade_com_frete_1un = produto.preco_unidade
         return produto
-    valor, prazo = frete_mod.estimate_vtex(
-        produto.site, produto.sku_id, quantity=1, seller_id=produto.seller_id or "1",
+
+    seller = produto.seller_id or "1"
+    one, bulk = frete_mod.estimate_with_bulk(
+        produto.site, produto.sku_id, seller_id=seller,
+        qtde_bulk=produto.bulk_qtde,
     )
-    produto.frete = float(valor)
-    produto.preco_com_frete = round(produto.preco + valor, 2)
-    denom = produto.qtde_unidades if produto.qtde_unidades > 0 else 1
-    produto.preco_unidade_com_frete = round(produto.preco_com_frete / denom, 4)
-    produto.frete_prazo_dias = prazo or ""
-    # Downstream rules key off preco_unidade — swap in the delivered value
-    # so classify() operates on apples-to-apples. Preserve nominal in
-    # preco_lista for the notifier breakdown.
+
+    # qtde=1 comparison values
+    produto.frete_1un = one.valor
+    produto.preco_com_frete_1un = round(produto.preco + one.valor, 2)
+    unids_por_emb = produto.qtde_unidades if produto.qtde_unidades > 0 else 1
+    produto.preco_unidade_com_frete_1un = round(
+        produto.preco_com_frete_1un / unids_por_emb, 4
+    )
+
+    # Bulk cart (realistic — that's what the buyer would order)
+    produto.frete = bulk.valor
+    produto.frete_prazo_dias = bulk.prazo or one.prazo or ""
+    total_produto_bulk = produto.preco * produto.bulk_qtde
+    produto.preco_com_frete = round(total_produto_bulk + bulk.valor, 2)
+    total_unids = unids_por_emb * produto.bulk_qtde
+    produto.preco_unidade_com_frete = round(produto.preco_com_frete / total_unids, 4)
+
+    # Downstream rules key off preco_unidade — swap in the bulk delivered
+    # unit price so classify() operates on the realistic cart.
     produto.preco_unidade = produto.preco_unidade_com_frete
     return produto
 
@@ -142,9 +162,9 @@ def run(dry_run: bool = False) -> dict:
 
         # Apply freight to each site's candidate BEFORE picking global best —
         # this reorders results by delivered price. Free-shipping thresholds
-        # are respected by the store's API.
+        # are respected by the store's API. bulk_qtde comes from the alert.
         for r in all_results:
-            _apply_frete(r)
+            _apply_frete(r, qtde_bulk=alerta.qtde_bulk)
         global_best = rules.best_of(all_results)
         if not global_best:
             # Nothing to record; mark status but keep scanning tomorrow

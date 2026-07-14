@@ -257,10 +257,12 @@ def append_preco_observado(
         frete,
         preco_com_frete,
     ]]
+    # RAW so the timestamp stays as an ISO string and doesn't get coerced
+    # into a Sheets date-serial (breaks history.py parsing).
     service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
         range="Precos_Observados!A:L",
-        valueInputOption="USER_ENTERED",
+        valueInputOption="RAW",
         insertDataOption="INSERT_ROWS",
         body={"values": row},
     ).execute()

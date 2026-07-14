@@ -81,29 +81,32 @@ def _card_html(entry: OfferEntry) -> str:
     nome = _esc(entry.insumo_nome or entry.alerta.insumo_id)
     titulo = _esc(entry.produto.titulo[:120])
 
-    preco_unid = entry.produto.preco_unidade_com_frete or entry.produto.preco_unidade
-    if entry.produto.qtde_unidades > 1:
-        preco_line = (
-            f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_unid)}</b>"
-            f" <span style='color:#666'>por unidade</span>"
-            f"<br><span style='color:#888;font-size:13px'>"
-            f"{entry.produto.qtde_unidades} unidades"
-            f"</span>"
-        )
-    else:
-        preco_line = (
-            f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_unid)}</b>"
-            f" <span style='color:#666'>por unidade</span>"
-        )
+    p = entry.produto
+    preco_unid = p.preco_unidade_com_frete or p.preco_unidade
+    preco_line = (
+        f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_unid)}</b>"
+        f" <span style='color:#666'>por unidade</span>"
+    )
 
     lines_meta = []
-    if entry.produto.frete > 0 or entry.produto.preco_com_frete > 0:
-        prazo = f" • {_esc(entry.produto.frete_prazo_dias)} dias úteis" if entry.produto.frete_prazo_dias else ""
-        lines_meta.append(
-            f"📦 Produto <b>{_fmt_brl(entry.produto.preco)}</b> + "
-            f"frete <b>{_fmt_brl(entry.produto.frete)}</b> = "
-            f"<b>{_fmt_brl(entry.produto.preco_com_frete)}</b>{prazo}"
-        )
+    if p.preco_com_frete > 0:
+        prazo = f" • {_esc(p.frete_prazo_dias)} dias úteis" if p.frete_prazo_dias else ""
+        if p.bulk_qtde > 1:
+            emb_line = f"{p.bulk_qtde} embalagens" + (f" (= {p.qtde_unidades * p.bulk_qtde} unidades)" if p.qtde_unidades > 1 else "")
+            lines_meta.append(
+                f"📦 Comprando {emb_line}: produto <b>{_fmt_brl(p.preco * p.bulk_qtde)}</b> "
+                f"+ frete <b>{_fmt_brl(p.frete)}</b> = <b>{_fmt_brl(p.preco_com_frete)}</b>{prazo}"
+            )
+            if p.preco_com_frete_1un and p.preco_unidade_com_frete_1un > p.preco_unidade_com_frete:
+                lines_meta.append(
+                    f"↪️ Comprando 1 embalagem: {_fmt_brl(p.preco_unidade_com_frete_1un)}/un "
+                    f"(frete {_fmt_brl(p.frete_1un)}) — comprar em volume dilui o frete"
+                )
+        else:
+            lines_meta.append(
+                f"📦 Produto <b>{_fmt_brl(p.preco)}</b> + "
+                f"frete <b>{_fmt_brl(p.frete)}</b> = <b>{_fmt_brl(p.preco_com_frete)}</b>{prazo}"
+            )
     if entry.verdict.baseline is not None:
         lines_meta.append(f"📊 Preço habitual: <b>{_fmt_brl(entry.verdict.baseline)}</b> por unidade")
     elif entry.verdict.ultimo_preco is not None:

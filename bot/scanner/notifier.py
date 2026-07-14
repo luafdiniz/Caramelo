@@ -82,21 +82,31 @@ def build_message(
         "",
     ]
 
-    if produto.qtde_unidades > 1:
-        lines.append(
-            f"💰 <b>{_fmt_brl(produto.preco_unidade_com_frete or produto.preco_unidade)}</b> "
-            f"por unidade ({produto.qtde_unidades}un × {_fmt_brl(produto.preco / max(produto.qtde_unidades,1))} nominal)"
-        )
-    else:
-        lines.append(f"💰 <b>{_fmt_brl(produto.preco_unidade_com_frete or produto.preco_unidade)}</b> por unidade")
+    lines.append(f"💰 <b>{_fmt_brl(produto.preco_unidade_com_frete or produto.preco_unidade)}</b> por unidade")
 
     # Freight breakdown (only when we actually consulted frete)
-    if produto.frete > 0 or produto.preco_com_frete > 0:
+    if produto.preco_com_frete > 0:
         prazo = f" • {_esc(produto.frete_prazo_dias)} dias úteis" if produto.frete_prazo_dias else ""
-        lines.append(
-            f"📦 Produto {_fmt_brl(produto.preco)} + frete {_fmt_brl(produto.frete)} = "
-            f"<b>{_fmt_brl(produto.preco_com_frete)}</b>{prazo}"
-        )
+        if produto.bulk_qtde > 1:
+            emb = produto.qtde_unidades
+            total_unids = emb * produto.bulk_qtde
+            lines.append(
+                f"📦 Comprando {produto.bulk_qtde} embalagens"
+                + (f" (= {total_unids}un)" if emb > 1 else "")
+                + f": produto {_fmt_brl(produto.preco * produto.bulk_qtde)} "
+                + f"+ frete {_fmt_brl(produto.frete)} = "
+                + f"<b>{_fmt_brl(produto.preco_com_frete)}</b>{prazo}"
+            )
+            if produto.preco_com_frete_1un and produto.preco_unidade_com_frete_1un > produto.preco_unidade_com_frete:
+                lines.append(
+                    f"↪️ Comprando 1 embalagem: {_fmt_brl(produto.preco_unidade_com_frete_1un)}/un "
+                    f"(frete {_fmt_brl(produto.frete_1un)}) — comprar em volume dilui"
+                )
+        else:
+            lines.append(
+                f"📦 Produto {_fmt_brl(produto.preco)} + frete {_fmt_brl(produto.frete)} = "
+                f"<b>{_fmt_brl(produto.preco_com_frete)}</b>{prazo}"
+            )
 
     if verdict.baseline is not None:
         lines.append(f"📊 Preço habitual: {_fmt_brl(verdict.baseline)} por unidade")
