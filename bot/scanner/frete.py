@@ -197,8 +197,12 @@ def simulate_cart(
     seller_id: str = "1",
     cep: Optional[str] = None,
 ) -> Optional[SimulationResult]:
-    """Full cart simulation — freight + promotions."""
-    return _simulate(site_key, sku_id, quantity, seller_id, cep=cep)
+    """Full cart simulation — freight + promotions + per-site overrides."""
+    from scanner import frete_overrides
+    sim = _simulate(site_key, sku_id, quantity, seller_id, cep=cep)
+    if sim is None:
+        return None
+    return frete_overrides.apply(site_key, sim)
 
 
 def simulate_curve(
@@ -211,6 +215,7 @@ def simulate_curve(
     """Simulate the cart at each quantity — returns SimulationResult with
     frete + total after promotional discounts. Callers use this to render
     the price/un curve and highlight free-shipping breakpoints."""
+    from scanner import frete_overrides  # local import avoids cycle
     qs = sorted({max(int(q), 1) for q in quantities})
     out: list[SimulationResult] = []
     for q in qs:
@@ -221,6 +226,8 @@ def simulate_curve(
                 total_produto=0.0, total_descontos=0.0,
                 total_final=0.0, total_bruto=0.0,
             )
+        else:
+            sim = frete_overrides.apply(site_key, sim)
         out.append(sim)
     return out
 
