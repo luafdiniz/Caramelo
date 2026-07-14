@@ -14,6 +14,9 @@ from scanner.frete import SimulationResult
 SUPERNOSSO_FIXED_FRETE = 19.90
 SUPERNOSSO_FREE_THRESHOLD = 500.00
 
+APOIO_FIXED_FRETE = 19.90
+APOIO_FREE_THRESHOLD = 600.00  # Banner: "grátis em compras acima de R$ 600 para BH e região"
+
 
 def apply(site_key: str, sim: SimulationResult) -> SimulationResult:
     """Return a possibly-adjusted SimulationResult that reflects the real
@@ -29,8 +32,16 @@ def apply(site_key: str, sim: SimulationResult) -> SimulationResult:
             sim.frete = SUPERNOSSO_FIXED_FRETE
             sim.prazo = sim.prazo or "entrega agendada"
         sim.total_final = round(sim.total_produto + sim.frete, 2)
-    # apoio: HTML shows thresholds "a partir de R$ 399/499/600" — bands per
-    #        neighborhood, need investigation. Leave API value for now.
+    elif site_key == "apoio":
+        # Confirmed via Luiza's cart (CEP 31.140-500 = Cachoeirinha/BH):
+        # R$ 19,90 fixed, free above R$ 600 subtotal.
+        if sim.total_bruto >= APOIO_FREE_THRESHOLD:
+            sim.frete = 0.0
+            sim.prazo = sim.prazo or "entrega grátis"
+        else:
+            sim.frete = APOIO_FIXED_FRETE
+            sim.prazo = sim.prazo or "entrega agendada"
+        sim.total_final = round(sim.total_produto + sim.frete, 2)
     # santoantonio: freight depends on weight/dimensions; API result is
     #               closer to real. Leave as-is.
     return sim
