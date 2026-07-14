@@ -82,12 +82,9 @@ def build_message(
         "",
     ]
 
-    # Nominal per-unit is what's on the shelf label, before freight
-    nominal_unid = produto.preco / max(produto.qtde_unidades, 1)
-    lines.append(f"💰 <b>{_fmt_brl(nominal_unid)}</b> por unidade (nominal)")
-
     if produto.promocoes:
         lines.append(f"🎁 Promoção ativa: <b>{_esc(', '.join(produto.promocoes))}</b>")
+        lines.append("")
 
     # Freight curve — most useful visual: what does buying-more do?
     if produto.frete_curve:
@@ -104,20 +101,24 @@ def build_message(
             frete_tag = "✓ frete grátis" if frete_v == 0 and q > 1 else f"frete {_fmt_brl(frete_v)}"
             promo_tag = f", promo −{_fmt_brl(-desconto)}" if desconto and desconto < -0.01 else ""
             lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un  ({frete_tag}{promo_tag})")
-        # Highlight the free-shipping breakpoint
+        # Highlight the free-shipping breakpoint (grid point that hits R$ 0)
         zeros = [pt for pt in produto.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]
         if zeros:
             first_zero = min(zeros, key=lambda p: p["qtde"])
-            lines.append(f"💡 A partir de {first_zero['qtde']} {emb_word_pl} o frete zera")
+            lines.append(f"💡 Frete zera a partir de <b>{first_zero['qtde']}</b> {emb_word_pl}")
 
-    if verdict.baseline is not None:
+    if verdict.severity == "alvo":
+        if verdict.savings is not None and verdict.savings > 0:
+            lines.append("")
+            lines.append(f"💸 <b>{_fmt_brl(verdict.savings)}</b> abaixo do seu preço-alvo por unidade")
+    elif verdict.baseline is not None:
         lines.append("")
-        lines.append(f"📊 Preço habitual (com frete): {_fmt_brl(verdict.baseline)} por unidade")
+        lines.append(f"📊 Preço habitual (últimos 30 dias): {_fmt_brl(verdict.baseline)}/un")
+        if verdict.savings is not None and verdict.savings > 0:
+            lines.append(f"💸 <b>{_fmt_brl(verdict.savings)}</b>/un mais barato que o habitual")
     elif verdict.ultimo_preco is not None:
-        lines.append(f"📊 Último preço: {_fmt_brl(verdict.ultimo_preco)} por unidade")
-
-    if verdict.savings is not None and verdict.savings > 0:
-        lines.append(f"💸 Você economiza {_fmt_brl(verdict.savings)} por unidade vs. habitual")
+        lines.append("")
+        lines.append(f"📊 Comparado ao último preço observado: {_fmt_brl(verdict.ultimo_preco)}/un")
 
     lines.append(f"📍 {_esc(site_label)}")
 

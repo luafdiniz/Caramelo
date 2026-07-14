@@ -24,10 +24,12 @@ import time
 from datetime import datetime
 from typing import Optional
 
+import math
+
 from lib import sheets
 from scanner import (
     config, email_notifier, extractor, frete as frete_mod,
-    history as history_mod, notifier, rules,
+    frete_overrides, history as history_mod, notifier, rules,
 )
 from scanner.scrapers import mercadolivre, vtex
 from scanner.scrapers.base import ProductResult
@@ -51,7 +53,16 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
         return produto
 
     seller = produto.seller_id or "1"
-    grid_qs = frete_mod.default_grid(produto.bulk_qtde)
+
+    # Add the exact free-freight breakpoint to the grid when the store has
+    # a known threshold (e.g. Supernosso R$ 500 → 63 latas at R$ 7,99).
+    extras: list[int] = []
+    threshold = frete_overrides.get_free_threshold(produto.site)
+    if threshold and produto.preco > 0:
+        breakpoint_qtde = math.ceil(threshold / produto.preco)
+        extras.append(breakpoint_qtde)
+
+    grid_qs = frete_mod.default_grid(produto.bulk_qtde, extra=extras)
     sims = frete_mod.simulate_curve(
         produto.site, produto.sku_id, seller_id=seller, quantities=grid_qs,
     )

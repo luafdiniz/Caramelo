@@ -82,10 +82,16 @@ def _card_html(entry: OfferEntry) -> str:
     titulo = _esc(entry.produto.titulo[:120])
 
     p = entry.produto
-    nominal_unid = p.preco / max(p.qtde_unidades, 1)
+    # Best delivered price from the curve (the qtde_bulk row is what the classifier uses)
+    bulk_row = next((c for c in p.frete_curve if c["qtde"] == p.bulk_qtde), None) or (
+        p.frete_curve[0] if p.frete_curve else None
+    )
+    preco_delivered = bulk_row["preco_unid_delivered"] if bulk_row else p.preco_unidade
+    label_qtde = bulk_row["qtde"] if bulk_row else 1
+    unids = "un" if p.qtde_unidades > 1 else ""
     preco_line = (
-        f"<b style='font-size:22px;color:#111'>{_fmt_brl(nominal_unid)}</b>"
-        f" <span style='color:#666'>por unidade (nominal)</span>"
+        f"<b style='font-size:22px;color:#111'>{_fmt_brl(preco_delivered)}</b>"
+        f" <span style='color:#666'>por unidade comprando {label_qtde} {unids}embalagens</span>"
     )
 
     curve_html = ""
@@ -120,12 +126,15 @@ def _card_html(entry: OfferEntry) -> str:
             )
 
     lines_meta = []
-    if entry.verdict.baseline is not None:
-        lines_meta.append(f"📊 Preço habitual (com frete): <b>{_fmt_brl(entry.verdict.baseline)}</b> por unidade")
+    if entry.verdict.severity == "alvo":
+        if entry.verdict.savings is not None and entry.verdict.savings > 0:
+            lines_meta.append(f"💸 <b>{_fmt_brl(entry.verdict.savings)}</b> abaixo do seu preço-alvo por unidade")
+    elif entry.verdict.baseline is not None:
+        lines_meta.append(f"📊 Preço habitual (últimos 30 dias): <b>{_fmt_brl(entry.verdict.baseline)}</b>/un")
+        if entry.verdict.savings and entry.verdict.savings > 0:
+            lines_meta.append(f"💸 <b>{_fmt_brl(entry.verdict.savings)}</b>/un mais barato que o habitual")
     elif entry.verdict.ultimo_preco is not None:
-        lines_meta.append(f"📊 Último preço: <b>{_fmt_brl(entry.verdict.ultimo_preco)}</b> por unidade")
-    if entry.verdict.savings and entry.verdict.savings > 0:
-        lines_meta.append(f"💸 Você economiza <b>{_fmt_brl(entry.verdict.savings)}</b> por unidade vs. habitual")
+        lines_meta.append(f"📊 Último preço observado: <b>{_fmt_brl(entry.verdict.ultimo_preco)}</b>/un")
 
     flags_html = ""
     if entry.produto.tem_oferta_clube:

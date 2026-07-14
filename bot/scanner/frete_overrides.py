@@ -18,6 +18,16 @@ APOIO_FIXED_FRETE = 19.90
 APOIO_FREE_THRESHOLD = 600.00  # Banner: "grátis em compras acima de R$ 600 para BH e região"
 
 
+def get_free_threshold(site_key: str) -> float:
+    """Return subtotal-bruto amount that zeros the freight for this site.
+    Returns 0 if the site has no known threshold (frete varies by API)."""
+    if site_key == "supernosso":
+        return SUPERNOSSO_FREE_THRESHOLD
+    if site_key == "apoio":
+        return APOIO_FREE_THRESHOLD
+    return 0.0
+
+
 def apply(site_key: str, sim: SimulationResult) -> SimulationResult:
     """Return a possibly-adjusted SimulationResult that reflects the real
     checkout price for this store.
