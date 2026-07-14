@@ -99,16 +99,22 @@ def build_message(
         lines.append("")
 
     # Freight curve: how much you actually pay per unit at each cart size.
-    # Deliberately simple — no "promo −R$ X" breakdown here since we already
-    # isolated the promo above. This table is just total-paid divided by units.
+    # Consecutive rows where freight is already zero get collapsed so we
+    # don't show 84/85 both marked "sem frete" — just the first one.
     if produto.frete_curve:
         lines.append("<b>📦 Total pago por unidade (produto + frete):</b>")
         emb_word = "embalagem" if produto.qtde_unidades > 1 else "unidade"
         emb_word_pl = "embalagens" if produto.qtde_unidades > 1 else "unidades"
+
+        prev_was_free = False
         for pt in produto.frete_curve:
             q = pt["qtde"]
             unid = pt["preco_unid_delivered"]
-            free_tag = "  ✓ sem frete" if pt["frete"] == 0 and q > 1 else ""
+            is_free = pt["frete"] == 0 and q > 1
+            if is_free and prev_was_free:
+                continue
+            prev_was_free = is_free
+            free_tag = "  ✓ sem frete" if is_free else ""
             label = f"{q} {emb_word if q == 1 else emb_word_pl}"
             lines.append(f"  {label:<18} → <b>{_fmt_brl(unid)}</b>/un{free_tag}")
         zeros = [pt for pt in produto.frete_curve if pt["frete"] == 0 and pt["qtde"] > 1]

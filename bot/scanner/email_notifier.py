@@ -118,12 +118,17 @@ def _card_html(entry: OfferEntry) -> str:
     if p.frete_curve:
         emb_word_pl = "embalagens" if p.qtde_unidades > 1 else "unidades"
         rows = []
+        prev_was_free = False
         for pt in p.frete_curve:
             q = pt["qtde"]
             frete_v = pt["frete"]
             unid = pt["preco_unid_delivered"]
+            is_free = frete_v == 0 and q > 1
+            if is_free and prev_was_free:
+                continue
+            prev_was_free = is_free
             free_tag = ("<span style='color:#2e7d32;font-weight:600'>sem frete</span>"
-                        if frete_v == 0 and q > 1 else "")
+                        if is_free else "")
             label = f"{q} {emb_word_pl if q > 1 else ('embalagem' if p.qtde_unidades > 1 else 'unidade')}"
             rows.append(
                 f"<tr>"

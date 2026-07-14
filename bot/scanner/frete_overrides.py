@@ -31,11 +31,17 @@ def get_free_threshold(site_key: str) -> float:
 def apply(site_key: str, sim: SimulationResult) -> SimulationResult:
     """Return a possibly-adjusted SimulationResult that reflects the real
     checkout price for this store.
+
+    The threshold is checked against `total_produto` (produto pós-descontos,
+    antes de frete) — Supernosso confirmed via cart screenshots: 83 latas
+    Cemil at R$ 7,99 with 50% no 2° = R$ 499,17 pós-desconto → still charges;
+    84 latas = R$ 503,16 → free. So threshold is on post-discount subtotal,
+    not on bruto.
     """
     if sim is None:
         return sim
     if site_key == "supernosso":
-        if sim.total_bruto >= SUPERNOSSO_FREE_THRESHOLD:
+        if sim.total_produto >= SUPERNOSSO_FREE_THRESHOLD:
             sim.frete = 0.0
             sim.prazo = sim.prazo or "entrega grátis"
         else:
@@ -43,9 +49,7 @@ def apply(site_key: str, sim: SimulationResult) -> SimulationResult:
             sim.prazo = sim.prazo or "entrega agendada"
         sim.total_final = round(sim.total_produto + sim.frete, 2)
     elif site_key == "apoio":
-        # Confirmed via Luiza's cart (CEP 31.140-500 = Cachoeirinha/BH):
-        # R$ 19,90 fixed, free above R$ 600 subtotal.
-        if sim.total_bruto >= APOIO_FREE_THRESHOLD:
+        if sim.total_produto >= APOIO_FREE_THRESHOLD:
             sim.frete = 0.0
             sim.prazo = sim.prazo or "entrega grátis"
         else:

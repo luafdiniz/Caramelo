@@ -58,12 +58,27 @@ def _apply_frete(produto: ProductResult, qtde_bulk: int = 1) -> ProductResult:
     #  - 1 (baseline)
     #  - 2 (isolates the promo, no bulk effect)
     #  - qtde_bulk (natural pack)
-    #  - free-shipping breakpoint if known
+    #  - free-shipping breakpoint (found via 1-shot binary search against
+    #    the post-discount total, so promos are respected)
     extras: list[int] = [2]
     threshold = frete_overrides.get_free_threshold(produto.site)
     if threshold and produto.preco > 0:
-        breakpoint_qtde = math.ceil(threshold / produto.preco)
-        extras.append(breakpoint_qtde)
+        # First simulate bulk_qtde to learn the real per-unit rate AFTER
+        # promo discounts (e.g. "50% no 2°" halves every 2nd unit).
+        bulk_sim = frete_mod.simulate_cart(
+            produto.site, produto.sku_id, produto.bulk_qtde, seller_id=seller,
+        )
+        if bulk_sim and bulk_sim.total_produto > 0 and produto.bulk_qtde > 0:
+            rate_effective = bulk_sim.total_produto / produto.bulk_qtde
+            if rate_effective > 0:
+                breakpoint_est = math.ceil(threshold / rate_effective)
+                # Include the estimated point AND its neighbor — for
+                # pair-based promos ("50% no 2°") the estimate can land 1
+                # short of the pós-desconto threshold. The renderer collapses
+                # consecutive zero-freight rows so at most one "sem frete"
+                # line shows.
+                extras.append(breakpoint_est)
+                extras.append(breakpoint_est + 1)
 
     grid_qs = frete_mod.default_grid(produto.bulk_qtde, extra=extras)
     sims = frete_mod.simulate_curve(
