@@ -161,7 +161,9 @@ def _card_html(entry: OfferEntry) -> str:
 
     # R$ por medida base (kg/L)
     medida_html = ""
-    if p.medida_valor > 0 and p.medida_unidade:
+    # Same guard as the Telegram side — R$/kg-L only when the item is
+    # sold by weight/volume (qtde_unidades == 1), not for embalagens.
+    if p.medida_valor > 0 and p.medida_unidade and p.qtde_unidades == 1:
         preco_final = p.preco_unidade_com_frete or p.preco_unidade
         preco_por_medida = preco_final / p.medida_valor
         medida_html = (

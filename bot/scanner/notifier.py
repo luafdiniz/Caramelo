@@ -167,8 +167,12 @@ def build_message(
             first_zero = min(zeros, key=lambda p: p["qtde"])
             lines.append(f"💡 Frete zera a partir de <b>{first_zero['qtde']}</b> {emb_word_pl}")
 
-    # R$ por medida base (kg/L) — só se o título tinha peso/volume detectável
-    if produto.medida_valor > 0 and produto.medida_unidade:
+    # R$ por medida base (kg/L). Só faz sentido para produtos VENDIDOS por
+    # peso/volume (leite 1L, açúcar 5kg, leite condensado 395g) — que têm
+    # qtde_unidades=1. Se qtde_unidades > 1 (packs tipo "220ml 10un") o
+    # "220ml" é a capacidade da embalagem, não algo comparável em R$/L.
+    if (produto.medida_valor > 0 and produto.medida_unidade
+            and produto.qtde_unidades == 1):
         preco_final = produto.preco_unidade_com_frete or produto.preco_unidade
         preco_por_medida = preco_final / produto.medida_valor
         lines.append(f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{produto.medida_unidade}")
