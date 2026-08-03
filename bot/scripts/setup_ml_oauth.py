@@ -104,8 +104,51 @@ def main() -> int:
 
     print()
     print("=" * 70)
-    print("✓ REFRESH TOKEN OBTIDO — setando GitHub secret via CLI...")
+    print("✓ REFRESH TOKEN OBTIDO — testando refresh flow antes de salvar...")
     print("=" * 70)
+    print(f"Token recebido do exchange: {refresh_token}")
+
+    # Immediately try to refresh with this token. If ML says "already used",
+    # something's off with the app config or ML side. If it works, we get
+    # a NEW refresh_token (ML rotates) — that's what we save to GH.
+    test_body = (
+        f"grant_type=refresh_token"
+        f"&client_id={args.client_id}"
+        f"&client_secret={args.client_secret}"
+        f"&refresh_token={refresh_token}"
+    )
+    test_proc = subprocess.run(
+        [
+            "curl", "-sL", "--max-time", "20",
+            "-X", "POST",
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "-H", "Accept: application/json",
+            "-d", test_body,
+            TOKEN_URL,
+        ],
+        capture_output=True, text=True, timeout=25,
+    )
+    try:
+        test_data = json.loads(test_proc.stdout)
+    except json.JSONDecodeError:
+        print(f"⚠️  refresh test — resposta não-JSON: {test_proc.stdout[:200]}")
+        return 1
+
+    if not test_data.get("access_token"):
+        print(f"⚠️  refresh test FALHOU: {json.dumps(test_data, indent=2)[:400]}")
+        print(f"O ML rejeitou este refresh_token na primeira tentativa.")
+        print(f"Isso é bug/config do lado do ML — ver se 'Refresh Token' está mesmo")
+        print(f"marcado nos Fluxos OAuth do app.")
+        return 1
+
+    print(f"✓ Refresh flow funciona. ML retornou access_token válido.")
+    rotated = test_data.get("refresh_token")
+    if rotated and rotated != refresh_token:
+        print(f"✓ ML rotacionou o refresh_token (esperado — é rotativo).")
+        print(f"Novo token: {rotated}")
+        refresh_token = rotated
+    else:
+        print(f"✓ ML NÃO rotacionou — mesmo token vale pra próximo uso.")
 
     # Set the GH secret via --body-file so we don't rely on prompt paste
     # (which sometimes trims special chars). Write to a temp file, run
