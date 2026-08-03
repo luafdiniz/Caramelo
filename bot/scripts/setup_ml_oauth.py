@@ -104,20 +104,35 @@ def main() -> int:
 
     print()
     print("=" * 70)
-    print("✓ REFRESH TOKEN OBTIDO")
+    print("✓ REFRESH TOKEN OBTIDO — setando GitHub secret via CLI...")
     print("=" * 70)
+
+    # Set the GH secret via --body-file so we don't rely on prompt paste
+    # (which sometimes trims special chars). Write to a temp file, run
+    # gh secret set --body-file <tmp>, delete.
+    import tempfile
+    import os as _os
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as tf:
+        tf.write(refresh_token)
+        tmp_path = tf.name
+    try:
+        proc = subprocess.run(
+            ["gh", "secret", "set", "ML_REFRESH_TOKEN",
+             "-R", "luafdiniz/Caramelo",
+             "--body-file", tmp_path],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            print(f"⚠️  gh secret set falhou: {proc.stderr[:200]}")
+            print(f"Token: {refresh_token}")
+            print("Cola manualmente em GH → Settings → Secrets → ML_REFRESH_TOKEN")
+            return 1
+        print("✓ ML_REFRESH_TOKEN atualizado no GitHub")
+    finally:
+        _os.unlink(tmp_path)
+
     print()
-    print("Cole o valor abaixo em ML_REFRESH_TOKEN no GitHub:")
-    print()
-    print(f"  {refresh_token}")
-    print()
-    print("Comando pra setar via CLI (input escondido):")
-    print()
-    print(f"  gh secret set ML_REFRESH_TOKEN -R luafdiniz/Caramelo")
-    print()
-    print("Depois disso, roda o dry-run:")
-    print()
-    print(f"  gh workflow run 'Scanner de Preços' -R luafdiniz/Caramelo -f dry_run=true")
+    print(f"Testa: gh workflow run 'Scanner de Preços' -R luafdiniz/Caramelo -f dry_run=true")
     return 0
 
 
