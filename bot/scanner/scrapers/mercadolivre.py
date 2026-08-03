@@ -114,6 +114,12 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
         _token_cache["token"] = None
         return search(termo, marca_obrigatoria)
 
+    # Debug: log unexpected response shape (empty results is suspicious)
+    if not data.get("results"):
+        keys = list(data.keys()) if isinstance(data, dict) else "not-dict"
+        msg = data.get("message") or data.get("error") or ""
+        print(f"ml.search debug: keys={keys} message={msg!r} paging={data.get('paging')}")
+
     out: list[ProductResult] = []
     for item in data.get("results", []) or []:
         preco = float(item.get("price") or 0)
