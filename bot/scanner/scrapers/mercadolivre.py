@@ -146,4 +146,6 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
             medida_valor=medida_val,
             medida_unidade=medida_un,
         ))
+    raw_count = len(data.get('results', []) or [])
+    print(f"ml.search({termo!r}) raw={raw_count} → após filtro marca={len(out)}")
     return out
