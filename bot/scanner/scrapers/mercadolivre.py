@@ -20,11 +20,9 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime
 from typing import Optional
 from urllib.parse import quote
 
-from lib import sheets
 from scanner.extractor import (
     extract_qtde_unidades,
     extract_medida,
@@ -36,70 +34,24 @@ from scanner.scrapers.base import ProductResult
 
 _TOKEN_ENDPOINT = "https://api.mercadolibre.com/oauth/token"
 _SEARCH_ENDPOINT = "https://api.mercadolibre.com/sites/MLB/search"
-_AUTH_TAB = "_ScannerAuth"
 _TIMEOUT = 15
 _MAX_RESULTS = 10
 
 _access_cache: dict = {"token": None, "expires_at": 0.0}
 
 
-def _spreadsheet_id() -> Optional[str]:
-    return os.environ.get("SPREADSHEET_ID")
-
-
-def _read_auth_row(key: str) -> Optional[str]:
-    sid = _spreadsheet_id()
-    if not sid:
-        return None
-    try:
-        svc = sheets.get_service()
-        r = svc.spreadsheets().values().get(
-            spreadsheetId=sid, range=f"{_AUTH_TAB}!A2:B",
-        ).execute()
-    except Exception as e:
-        print(f"ml._read_auth_row: {e}")
-        return None
-    for row in r.get("values", []) or []:
-        if len(row) >= 2 and row[0] == key:
-            return str(row[1]) or None
-    return None
-
-
-def _write_auth_row(key: str, value: str) -> None:
-    sid = _spreadsheet_id()
-    if not sid:
-        return
-    try:
-        svc = sheets.get_service()
-        r = svc.spreadsheets().values().get(
-            spreadsheetId=sid, range=f"{_AUTH_TAB}!A2:A",
-        ).execute()
-        rows = r.get("values", []) or []
-        target_row = None
-        for i, row in enumerate(rows, start=2):
-            if row and row[0] == key:
-                target_row = i
-                break
-        if target_row is None:
-            target_row = len(rows) + 2
-        now = datetime.utcnow().isoformat(timespec="seconds")
-        svc.spreadsheets().values().update(
-            spreadsheetId=sid, range=f"{_AUTH_TAB}!A{target_row}:C{target_row}",
-            valueInputOption="RAW",
-            body={"values": [[key, value, now]]},
-        ).execute()
-    except Exception as e:
-        print(f"ml._write_auth_row: {e}")
-
-
 def _refresh_access_token() -> Optional[str]:
+    """Exchange the ML_REFRESH_TOKEN env secret for a short-lived access_token.
+
+    ML *may* rotate the refresh_token on each use. If it does, we log the
+    new value so it can be updated in GH secrets manually (secrets are
+    write-only via workflow default token — proper rotation would need a
+    PAT). If ML doesn't rotate, the static secret works until expiry (~6mo).
+    """
     client_id = os.environ.get("ML_CLIENT_ID", "").strip()
     client_secret = os.environ.get("ML_CLIENT_SECRET", "").strip()
-    if not client_id or not client_secret:
-        return None
-    refresh_token = _read_auth_row("ml_refresh_token")
-    if not refresh_token:
-        print("ml.refresh: no refresh_token in _ScannerAuth — run setup_ml_oauth.py")
+    refresh_token = os.environ.get("ML_REFRESH_TOKEN", "").strip()
+    if not client_id or not client_secret or not refresh_token:
         return None
 
     args = [
@@ -129,9 +81,12 @@ def _refresh_access_token() -> Optional[str]:
         print(f"ml.refresh no access_token: {str(data)[:200]}")
         return None
 
-    # ML rotates the refresh_token — persist immediately for the next scan.
     if new_refresh and new_refresh != refresh_token:
-        _write_auth_row("ml_refresh_token", new_refresh)
+        print(
+            f"ml.refresh: ML ROTATED the refresh_token — old ended in "
+            f"...{refresh_token[-6:]}, new ends in ...{new_refresh[-6:]}. "
+            f"Update ML_REFRESH_TOKEN in GH secrets before next run."
+        )
 
     _access_cache["token"] = access_token
     _access_cache["expires_at"] = time.time() + expires_in
