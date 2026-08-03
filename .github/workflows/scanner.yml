@@ -5,7 +5,14 @@ on:
     # Runs 2x/day in BRT (UTC-3):
     - cron: '0 11 * * *'  # 08:00 BRT
     - cron: '0 23 * * *'  # 20:00 BRT
-  workflow_dispatch:  # allow manual trigger from Actions UI
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry-run — não envia Telegram/email, não escreve no Sheet'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 concurrency:
   group: scanner
@@ -43,4 +50,10 @@ jobs:
           CEP_ENTREGA: ${{ secrets.CEP_ENTREGA }}
           ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}
           ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
-        run: python -m scanner.runner
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python -m scanner.runner --dry-run
+          else
+            python -m scanner.runner
+          fi
