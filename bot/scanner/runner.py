@@ -28,6 +28,7 @@ import math
 
 from lib import sheets
 from scanner import (
+    baselines as baselines_mod,
     config, email_notifier, extractor, frete as frete_mod,
     frete_overrides, history as history_mod, notifier, rules,
 )
@@ -186,6 +187,10 @@ def run(dry_run: bool = False) -> dict:
     now = datetime.now()
     email_batch: list[email_notifier.OfferEntry] = []
 
+    # Prefetch the antiga's Insumos tabs once — reused across all alerts to
+    # avoid N API calls. Returns {} silently when PLANILHA_ANTIGA_ID is unset.
+    antiga_cache = baselines_mod.load_antiga_cache(service=service)
+
     for alerta in alertas:
         summary["scanned"] += 1
         print(f"\n=== {alerta.scanner_id} ({alerta.insumo_id}) — {alerta.termo_busca!r} ===")
@@ -261,9 +266,20 @@ def run(dry_run: bool = False) -> dict:
         # 6. notify if warranted
         if verdict.notifica:
             insumo_nome = _get_insumo_nome(sid, alerta.insumo_id, prod_names)
-            notifier.send_offer(alerta, global_best, verdict, insumo_nome=insumo_nome, dry_run=dry_run)
+            try:
+                refs = baselines_mod.get_references(
+                    alerta, sid, service=service, _antiga_cache=antiga_cache,
+                )
+            except Exception as e:
+                print(f"  ! baselines fetch failed (non-fatal): {e}")
+                refs = None
+            notifier.send_offer(
+                alerta, global_best, verdict,
+                insumo_nome=insumo_nome, refs=refs, dry_run=dry_run,
+            )
             email_batch.append(email_notifier.OfferEntry(
-                alerta=alerta, produto=global_best, verdict=verdict, insumo_nome=insumo_nome,
+                alerta=alerta, produto=global_best, verdict=verdict,
+                insumo_nome=insumo_nome, refs=refs,
             ))
             summary["notified"] += 1
 

@@ -4,7 +4,7 @@ Reads Scanner_Alertas tab and parses each row into an AlertaConfig. All I/O
 lives here — the rest of the scanner works with plain dataclasses.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -30,6 +30,11 @@ class AlertaConfig:
     status: str
     snooze_ate: Optional[datetime]
     qtde_bulk: int = 1
+    # Códigos da planilha antiga ("CUSTOS PUDIM - 2025") que mapeiam pra este
+    # scanner. Ex: FOR-005 (220ml) → ["F-006", "F-010", "F-011"] (mesma forma
+    # em 3 fornecedores diferentes). Usado por scanner.baselines pra buscar
+    # última compra + menor histórico cross-fornecedor.
+    codigos_planilha: list[str] = field(default_factory=list)
 
 
 def _parse_bool(v) -> bool:
@@ -70,16 +75,17 @@ def get_alertas(spreadsheet_id: str, service=None) -> list[AlertaConfig]:
     """Load every row of Scanner_Alertas, active or not."""
     service = service or sheets.get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A2:N"
+        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A2:O"
     ).execute()
     rows = result.get("values", [])
     out: list[AlertaConfig] = []
     for r in rows:
         if not r or not r[0]:
             continue
-        r = list(r) + [""] * (14 - len(r))
+        r = list(r) + [""] * (15 - len(r))
         sites_raw = r[4] or ""
         sites = [s.strip() for s in sites_raw.split(",") if s.strip() in VALID_SITES]
+        codigos = [c.strip() for c in (r[14] or "").split(",") if c.strip()]
         out.append(AlertaConfig(
             scanner_id=r[0],
             insumo_id=r[1],
@@ -95,6 +101,7 @@ def get_alertas(spreadsheet_id: str, service=None) -> list[AlertaConfig]:
             status=(r[11] or "").strip(),
             snooze_ate=_parse_iso_datetime(r[12]),
             qtde_bulk=_parse_int(r[13], default=1),
+            codigos_planilha=codigos,
         ))
     return out
 

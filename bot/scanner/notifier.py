@@ -18,6 +18,7 @@ import re
 from typing import Optional
 
 from lib import telegram_client
+from scanner.baselines import Baselines
 from scanner.config import AlertaConfig
 from scanner.rules import Verdict
 from scanner.scrapers.base import ProductResult
@@ -100,11 +101,52 @@ def _esc(s: str) -> str:
     return html.escape(s or "", quote=False)
 
 
+def _fmt_delta(offer: float, ref: float) -> str:
+    """Compare offer against a reference price and return a short tag like
+    '▲ +3%' or '▼ -12%'. Blank when the two are within a rounding rounding
+    error (<1%)."""
+    if ref <= 0:
+        return ""
+    pct = (offer / ref - 1.0) * 100.0
+    if abs(pct) < 1:
+        return "≈"
+    if pct > 0:
+        return f"▲ +{pct:.0f}%"
+    return f"▼ {pct:.0f}%"
+
+
+def _refs_block(offer: float, refs: Optional[Baselines], median_30d: Optional[float]) -> list[str]:
+    """Build the 3-reference block for the alert message. Skips any row we
+    lack data for. Returns [] when nothing is available so the caller can
+    fall back to the legacy single-baseline line."""
+    rows: list[tuple[str, float, str]] = []  # (label, valor, origem)
+    if refs and refs.ultima_compra:
+        rows.append(("Última compra", refs.ultima_compra.valor, refs.ultima_compra.origem))
+    if refs and refs.menor_historico:
+        rows.append(("Menor histórico", refs.menor_historico.valor, refs.menor_historico.origem))
+    if median_30d is not None and median_30d > 0:
+        rows.append(("Mercado 30d", float(median_30d), "média scans"))
+
+    if not rows:
+        return []
+
+    label_width = max(len(r[0]) for r in rows) + 2
+    lines = ["", "<b>📊 Referências (por unidade):</b>"]
+    for label, valor, origem in rows:
+        delta = _fmt_delta(offer, valor)
+        lines.append(
+            f"  <code>{label:<{label_width}}</code>"
+            f" <b>{_fmt_brl(valor)}</b>  {_esc(origem)}  {delta}".rstrip()
+        )
+    return lines
+
+
 def build_message(
     alerta: AlertaConfig,
     produto: ProductResult,
     verdict: Verdict,
     insumo_nome: str = "",
+    refs: Optional[Baselines] = None,
 ) -> str:
     header = _SEVERITY_HEADER.get(verdict.severity or "", "🔔 Oferta")
     nome = insumo_nome or alerta.insumo_id
@@ -177,15 +219,18 @@ def build_message(
         preco_por_medida = preco_final / produto.medida_valor
         lines.append(f"⚖️ Equivale a <b>{_fmt_brl(preco_por_medida)}</b>/{produto.medida_unidade}")
 
-    if verdict.severity == "alvo":
-        if verdict.savings is not None and verdict.savings > 0:
-            lines.append("")
-            lines.append(f"💸 <b>{_fmt_brl(verdict.savings)}</b> abaixo do seu preço-alvo por unidade")
-    elif verdict.baseline is not None:
+    # Enriched references block: última compra + menor histórico (both from
+    # the antiga sheet) + median-30d de scans. Each is compared against the
+    # current offer price so Luiza can judge — a scan-median-based alert
+    # may fire even when the offer is above her última compra; the block
+    # shows that context explicitly instead of one opaque "habitual".
+    offer_price = produto.preco_unidade or 0.0
+    ref_lines = _refs_block(offer_price, refs, verdict.baseline)
+    if verdict.severity == "alvo" and verdict.savings is not None and verdict.savings > 0:
         lines.append("")
-        lines.append(f"📊 Preço habitual (últimos 30 dias): {_fmt_brl(verdict.baseline)}/un")
-        if verdict.savings is not None and verdict.savings > 0:
-            lines.append(f"💸 <b>{_fmt_brl(verdict.savings)}</b>/un mais barato que o habitual")
+        lines.append(f"💸 <b>{_fmt_brl(verdict.savings)}</b> abaixo do seu preço-alvo por unidade")
+    if ref_lines:
+        lines.extend(ref_lines)
     elif verdict.ultimo_preco is not None:
         lines.append("")
         lines.append(f"📊 Comparado ao último preço observado: {_fmt_brl(verdict.ultimo_preco)}/un")
@@ -213,11 +258,12 @@ def send_offer(
     produto: ProductResult,
     verdict: Verdict,
     insumo_nome: str = "",
+    refs: Optional[Baselines] = None,
     dry_run: bool = False,
 ) -> list[int]:
     """Format and dispatch. Returns list of Telegram message_ids sent
     (empty list on dry_run or send failure). Persist to enable future delete."""
-    text = build_message(alerta, produto, verdict, insumo_nome)
+    text = build_message(alerta, produto, verdict, insumo_nome, refs=refs)
     if dry_run:
         print("---- DRY RUN telegram message ----")
         print(text)

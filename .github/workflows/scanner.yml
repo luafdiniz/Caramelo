@@ -41,6 +41,7 @@ jobs:
         working-directory: bot
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          PLANILHA_ANTIGA_ID: ${{ secrets.PLANILHA_ANTIGA_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           ALERT_CHAT_IDS: ${{ secrets.ALERT_CHAT_IDS }}

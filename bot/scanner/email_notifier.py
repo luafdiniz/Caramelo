@@ -24,6 +24,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from typing import Optional
 
+from scanner.baselines import Baselines
 from scanner.config import AlertaConfig
 from scanner.rules import Verdict
 from scanner.scrapers.base import ProductResult
@@ -39,6 +40,7 @@ class OfferEntry:
     produto: ProductResult
     verdict: Verdict
     insumo_nome: str
+    refs: Optional[Baselines] = None
 
 
 _SITE_LABEL = {
@@ -176,10 +178,48 @@ def _card_html(entry: OfferEntry) -> str:
     if entry.verdict.severity == "alvo":
         if entry.verdict.savings is not None and entry.verdict.savings > 0:
             lines_meta.append(f"💸 <b>{_fmt_brl(entry.verdict.savings)}</b> abaixo do seu preço-alvo por unidade")
-    elif entry.verdict.baseline is not None:
-        lines_meta.append(f"📊 Preço habitual (últimos 30 dias): <b>{_fmt_brl(entry.verdict.baseline)}</b>/un")
-        if entry.verdict.savings and entry.verdict.savings > 0:
-            lines_meta.append(f"💸 <b>{_fmt_brl(entry.verdict.savings)}</b>/un mais barato que o habitual")
+
+    # Enriched references block — mirrors the Telegram side. Each row is
+    # a compact "label / valor / origem / delta%" line so the reader can see
+    # in one glance whether the offer beats their última compra or just the
+    # current market baseline.
+    ref_rows: list[tuple[str, float, str]] = []
+    if entry.refs and entry.refs.ultima_compra:
+        ref_rows.append(("Última compra", entry.refs.ultima_compra.valor, entry.refs.ultima_compra.origem))
+    if entry.refs and entry.refs.menor_historico:
+        ref_rows.append(("Menor histórico", entry.refs.menor_historico.valor, entry.refs.menor_historico.origem))
+    if entry.verdict.baseline is not None and entry.verdict.baseline > 0:
+        ref_rows.append(("Mercado 30d", float(entry.verdict.baseline), "média scans"))
+
+    offer_price = p.preco_unidade or 0.0
+
+    def _delta_html(offer: float, ref: float) -> str:
+        if ref <= 0 or offer <= 0:
+            return ""
+        pct = (offer / ref - 1.0) * 100.0
+        if abs(pct) < 1:
+            return "<span style='color:#666'>≈</span>"
+        if pct > 0:
+            return f"<span style='color:#c62828'>▲ +{pct:.0f}%</span>"
+        return f"<span style='color:#2e7d32'>▼ {pct:.0f}%</span>"
+
+    if ref_rows:
+        ref_html = (
+            "<div style='margin-top:6px;font-size:13px;color:#333;font-weight:600'>"
+            "📊 Referências (por unidade):</div>"
+            "<table style='margin-top:4px;border-collapse:collapse'>"
+        )
+        for label, valor, origem in ref_rows:
+            ref_html += (
+                f"<tr>"
+                f"<td style='padding:3px 8px;color:#555;font-size:13px'>{_esc(label)}</td>"
+                f"<td style='padding:3px 8px;font-weight:600;font-size:13px'>{_fmt_brl(valor)}</td>"
+                f"<td style='padding:3px 8px;color:#888;font-size:12px'>{_esc(origem)}</td>"
+                f"<td style='padding:3px 8px;font-size:12px'>{_delta_html(offer_price, valor)}</td>"
+                f"</tr>"
+            )
+        ref_html += "</table>"
+        lines_meta.append(ref_html)
     elif entry.verdict.ultimo_preco is not None:
         lines_meta.append(f"📊 Último preço observado: <b>{_fmt_brl(entry.verdict.ultimo_preco)}</b>/un")
 
