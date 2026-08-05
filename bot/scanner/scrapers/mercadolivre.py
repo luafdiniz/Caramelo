@@ -304,10 +304,18 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
 
         items = _fetch_items_for_product(token, prod_id)
         # Debug — quantos vendedores o catálogo desse product retornou.
-        # Ajuda a entender por que o outlier filter (que exige 3+ listings)
-        # pode não ter disparado num alerta suspeito.
         prices_dbg = sorted([it.get("price", 0) for it in items if it.get("price")])
         print(f"ml.search({termo!r}): PID={prod_id} items={len(items)} prices={prices_dbg[:5]}")
+
+        # Filter: catalog products com só 1 vendedor tendem a ser anúncios
+        # de sellers com 0 vendas listando preços absurdos pra atrair. Um
+        # produto real tem múltiplos vendedores. (Real 2026-08-05: SCA-003
+        # pegava MLB54115700 solitário a R\$ 8 e virava 🔥 falso positivo.)
+        if len(items) < 2:
+            if items:
+                print(f"ml.search: pulando {prod_id} — só 1 vendedor")
+            continue
+
         best = _best_offer_from_items(items)
         if not best:
             continue
@@ -336,24 +344,9 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
             medida_unidade=medida_un,
         ))
 
-    # Cross-catalog-product outlier filter — mesmo princípio da regra
-    # dentro de _best_offer_from_items, mas comparando preco_unidade
-    # entre catalog products distintos. Single-pass sobre a mediana
-    # original pra não recalcular e cascatear em cima de ofertas reais.
-    if len(out) >= 3:
-        prices = [r.preco_unidade for r in out if r.preco_unidade > 0]
-        if len(prices) >= 3:
-            median_pu = statistics.median(prices)
-            threshold = median_pu * 0.3
-            kept = []
-            for r in out:
-                if r.preco_unidade > 0 and r.preco_unidade < threshold:
-                    print(
-                        f"ml.search: descartando catalog outlier {r.url} "
-                        f"@ R$ {r.preco_unidade:.3f}/un — mediana é R$ {median_pu:.3f}/un"
-                    )
-                    continue
-                kept.append(r)
-            out = kept
-
+    # NB: não comparamos preco_unidade entre catalog products diferentes —
+    # cada catalog product tem seu próprio pack size ("Mini 80ml 20un" vs
+    # "500ml 1un" vs "500ml 60un"), o que faz a mediana entre eles não ser
+    # benchmark útil. A defesa contra shills é (a) filter interno dentro
+    # de cada catalog product e (b) skip de catalog products com 1 vendedor.
     return out
