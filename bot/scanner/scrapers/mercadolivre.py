@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import statistics
 import subprocess
 import time
 from typing import Optional
@@ -225,7 +226,16 @@ def _fetch_items_for_product(token: str, product_id: str) -> list[dict]:
 
 def _best_offer_from_items(items: list[dict]) -> Optional[dict]:
     """Pick the item with the lowest total price (product + shipping cost).
-    Skips items without price or with obviously broken data."""
+
+    Discards low-price outliers: if the cheapest listing is < 50% of the
+    second cheapest, it's almost certainly a seller with 0 sales listing
+    a wrong price to bait clicks. Real "great deals" cluster near the second
+    cheapest, so filtering here beats getting spurious 🔥 alerts.
+
+    (Real case 2026-08-05: 'Leite Piracanjuba 1L - 12 Unidades' PDP had one
+    listing at R$ 8 (0 vendas), others at R$ 71-200 — the R$ 8 caused a false
+    🔥 alerta com R$ 0,67/un.)
+    """
     ranked: list[tuple[float, dict]] = []
     for it in items:
         preco = it.get("price")
@@ -242,6 +252,24 @@ def _best_offer_from_items(items: list[dict]) -> Optional[dict]:
     if not ranked:
         return None
     ranked.sort(key=lambda r: r[0])
+
+    # Outlier filter: with 3+ listings, drop leading ones priced under 30%
+    # of the median. Comparing against the median (not against the next
+    # cheapest) avoids cascading-drops when two shill listings sit side by
+    # side. Two-listing PDPs are left alone — no group to derive a signal.
+    while len(ranked) >= 3:
+        median_p = statistics.median([r[0] for r in ranked])
+        if ranked[0][0] < median_p * 0.3:
+            dropped_price = ranked[0][0]
+            seller = ranked[0][1].get("seller_id")
+            print(
+                f"ml.items: descartando outlier R$ {dropped_price:.2f} "
+                f"(seller {seller}) — mediana é R$ {median_p:.2f}"
+            )
+            ranked = ranked[1:]
+        else:
+            break
+
     return ranked[0][1]
 
 
