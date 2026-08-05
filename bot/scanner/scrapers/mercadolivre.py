@@ -331,4 +331,28 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
             medida_valor=medida_val,
             medida_unidade=medida_un,
         ))
+
+    # Cross-catalog-product outlier filter. A single catalog product with
+    # just one listing bypasses `_best_offer_from_items` (which requires 3+
+    # to trigger). But when the search returns 3+ catalog products, we can
+    # compare THEIR unit prices — if one is <30% of the median of the group,
+    # it's the same "shill seller" pattern one level up. Real case: SCA-003
+    # (leite integral) retornava um MLB54115700 solitário a R\$ 8 que
+    # ganhava por ser o menor entre os catalog products.
+    while len(out) >= 3:
+        out.sort(key=lambda r: r.preco_unidade)
+        prices = [r.preco_unidade for r in out if r.preco_unidade > 0]
+        if len(prices) < 3:
+            break
+        median_pu = statistics.median(prices)
+        if out[0].preco_unidade > 0 and out[0].preco_unidade < median_pu * 0.3:
+            dropped = out[0]
+            print(
+                f"ml.search: descartando catalog outlier {dropped.url} "
+                f"@ R$ {dropped.preco_unidade:.3f}/un — mediana é R$ {median_pu:.3f}/un"
+            )
+            out = out[1:]
+        else:
+            break
+
     return out
