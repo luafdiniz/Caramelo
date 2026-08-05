@@ -33,6 +33,35 @@ _ANTIGA_TABS = ["Insumos alimentícios", "Insumos de embalagem"]
 # "R$ 1.234,56" / "R$ 1,32" / "1,32" / "1.32" → 1.32
 _BRL_RE = re.compile(r"[^\d,.\-]")
 
+# "419,58 (400 UNIDADES)" → total=419.58, unidades=400. The antiga's
+# "Menor preço histórico" column mixes unit prices and pack totals — we
+# need the parenthesized qty to convert pack totals back to per-unit.
+_PACK_NOTE_RE = re.compile(r"\(\s*(\d+)\s*UNIDAD", re.IGNORECASE)
+
+
+def _parse_historico_cell(cell) -> Optional[float]:
+    """Parse a 'Menor preço histórico' cell. Handles both:
+      - Unit price ("R$ 1,05")
+      - Pack total with qty in parens ("419,58 (400 UNIDADES)") — divides
+        by the parenthesized qty to return unit price.
+    Returns None if empty/unparseable.
+    """
+    raw = str(cell or "").strip()
+    if not raw:
+        return None
+    m = _PACK_NOTE_RE.search(raw)
+    # Strip the "(N UNIDADES)" clause before parsing the numeric part, so
+    # `_parse_brl` doesn't glue the qty digits onto the price.
+    without_note = re.sub(r"\([^)]*\)", "", raw).strip() if m else raw
+    total = _parse_brl(without_note)
+    if total is None:
+        return None
+    if m:
+        qty = int(m.group(1))
+        if qty > 0:
+            return total / qty
+    return total
+
 
 def _parse_brl(cell) -> Optional[float]:
     """Parse a BRL-formatted cell value into a float. Returns None if empty
@@ -93,7 +122,7 @@ def _load_antiga_insumos(service, antiga_id: str) -> dict[str, dict]:
                 "marca": str(row[2]).strip(),
                 "fornecedor": str(row[3]).strip(),
                 "valor_por_unidade": _parse_brl(row[7]),
-                "menor_historico": _parse_brl(row[11]),
+                "menor_historico": _parse_historico_cell(row[11]),
             }
     return result
 

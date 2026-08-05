@@ -10,7 +10,7 @@ from unittest.mock import patch
 from scanner import baselines
 from scanner.baselines import (
     Baselines, Reference,
-    _from_antiga, _fornecedor_short, _parse_brl,
+    _from_antiga, _fornecedor_short, _parse_brl, _parse_historico_cell,
 )
 from scanner.config import AlertaConfig
 
@@ -30,6 +30,25 @@ def test_parse_brl_basic_variants():
 def test_parse_brl_ignores_currency_symbols():
     assert _parse_brl("  R$  10,50  ") == 10.50
     assert _parse_brl("R$1") == 1.0
+
+
+# --- _parse_historico_cell ------------------------------------------------
+
+def test_parse_historico_divides_by_pack_qty():
+    # Real cell from the antiga: "419,58 (400 UNIDADES)" → per-unit is
+    # 419.58 / 400 = ~1.05. The old parser returned 419.58 as-is.
+    assert _parse_historico_cell("419,58 (400 UNIDADES)") == 419.58 / 400
+    assert _parse_historico_cell("R$ 100 (10 unidades)") == 10.0
+
+
+def test_parse_historico_plain_unit_price_passes_through():
+    assert _parse_historico_cell("R$ 1,05") == 1.05
+    assert _parse_historico_cell("1,05") == 1.05
+
+
+def test_parse_historico_empty():
+    assert _parse_historico_cell("") is None
+    assert _parse_historico_cell(None) is None
 
 
 # --- _fornecedor_short ------------------------------------------------------
