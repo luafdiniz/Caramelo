@@ -1,21 +1,29 @@
-"""Mercado Livre scraper — Authorization Code flow with auto-rotating refresh token.
+"""Mercado Livre scraper — via /products/search + /products/{id}/items.
 
-Client Credentials tokens are silently forbidden on `sites/MLB/search` (ML
-returns 403 even with valid app-only tokens). We use the Authorization Code
-grant: user autoriza the app once, we store the resulting refresh_token in
-the `_ScannerAuth` tab of the Sheet, and refresh a short-lived access_token
-on every scan.
+Descoberta 2026-08-05: `/sites/MLB/search` retorna 403 forbidden para apps
+não-certificados (independente do fluxo OAuth). A rota que funciona é o
+**Catálogo Unificado**:
 
-ML rotates the refresh_token on every use — the new one is written back to
-the Sheet immediately so subsequent scans pick it up. If ML rejects the
-refresh_token (expired ~6 months or invalidated), the scraper silently
-returns [] and the other sites keep working.
+    /products/search?q=X&site_id=MLB  →  lista de catalog products (fichas)
+    /products/{id}/items              →  vendedores ofertando aquele produto
 
-Setup: run `bot/scripts/setup_ml_oauth.py` once with client_id/client_secret.
+Limitação: só retorna listings que os vendedores VINCULARAM ao catálogo.
+Muitos listings ficam soltos ("No winners found"), invisíveis pra API.
+Cobertura na prática: OK pra itens populares (leite condensado Cemil, formas
+Plastilania 220ml/500ml); ruim pra Plastilania 1,1L (nenhum vendedor
+vinculado ao catálogo hoje).
+
+OAuth flow: ML rotaciona o refresh_token a cada uso. Depois de refresh,
+`_write_back_refresh_token()` grava o novo valor em `ML_REFRESH_TOKEN`
+via API do GitHub (precisa `GH_PAT` com scope=repo). Sem GH_PAT, o cron
+funciona 1x e depois falha — o token velho vira "already used" no ML.
+
+Setup inicial: `bot/scripts/setup_ml_oauth.py --client-id X --client-secret Y`
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -33,37 +41,91 @@ from scanner.scrapers.base import ProductResult
 
 
 _TOKEN_ENDPOINT = "https://api.mercadolibre.com/oauth/token"
-_SEARCH_ENDPOINT = "https://api.mercadolibre.com/sites/MLB/search"
+_PRODUCTS_SEARCH = "https://api.mercadolibre.com/products/search"
+_PRODUCT_ITEMS = "https://api.mercadolibre.com/products/{pid}/items"
 _TIMEOUT = 15
-_MAX_RESULTS = 10
+# How many catalog products to expand into items per query. 5 is enough for
+# the top brand/model matches; more balloons API calls without adding hits.
+_MAX_CATALOG_PRODUCTS = 5
 
 _access_cache: dict = {"token": None, "expires_at": 0.0}
 
 
-def _refresh_access_token() -> Optional[str]:
-    """Exchange the ML_REFRESH_TOKEN env secret for a short-lived access_token.
-
-    ML *may* rotate the refresh_token on each use. If it does, we log the
-    new value so it can be updated in GH secrets manually (secrets are
-    write-only via workflow default token — proper rotation would need a
-    PAT). If ML doesn't rotate, the static secret works until expiry (~6mo).
+def _write_back_refresh_token(new_token: str) -> None:
+    """Push a rotated refresh_token to the GitHub `ML_REFRESH_TOKEN` secret
+    via API. Silently skipped if `GH_PAT` env is absent — caller sees a log
+    line pointing at the manual fix.
     """
+    pat = os.environ.get("GH_PAT", "").strip()
+    repo = os.environ.get("GH_REPO", "luafdiniz/Caramelo").strip()
+    if not pat:
+        print(
+            f"ml.refresh: GH_PAT not set — cannot write-back rotated token. "
+            f"Cron will fail on next run. Manual fix: set ML_REFRESH_TOKEN "
+            f"to ...{new_token[-8:]} in GH Secrets."
+        )
+        return
+
+    try:
+        import requests
+        from nacl import public
+    except ImportError as e:
+        print(f"ml.refresh: write-back deps missing ({e}); token: ...{new_token[-8:]}")
+        return
+
+    try:
+        pk_resp = requests.get(
+            f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+            headers={
+                "Authorization": f"Bearer {pat}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10,
+        )
+        pk_resp.raise_for_status()
+        pk = pk_resp.json()
+        pk_bytes = base64.b64decode(pk["key"])
+        sealed = public.SealedBox(public.PublicKey(pk_bytes))
+        enc = base64.b64encode(sealed.encrypt(new_token.encode())).decode()
+
+        put_resp = requests.put(
+            f"https://api.github.com/repos/{repo}/actions/secrets/ML_REFRESH_TOKEN",
+            headers={
+                "Authorization": f"Bearer {pat}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"encrypted_value": enc, "key_id": pk["key_id"]},
+            timeout=10,
+        )
+        if put_resp.status_code in (201, 204):
+            print(f"ml.refresh: ✓ wrote back rotated token ...{new_token[-8:]}")
+        else:
+            print(f"ml.refresh: write-back HTTP {put_resp.status_code}: {put_resp.text[:200]}")
+    except Exception as e:
+        print(f"ml.refresh: write-back failed: {e}")
+
+
+def _refresh_access_token() -> Optional[str]:
+    """Trade ML_REFRESH_TOKEN for a short-lived access_token. Persists any
+    rotated refresh_token back to GH Secrets."""
     client_id = os.environ.get("ML_CLIENT_ID", "").strip()
     client_secret = os.environ.get("ML_CLIENT_SECRET", "").strip()
     refresh_token = os.environ.get("ML_REFRESH_TOKEN", "").strip()
     if not client_id or not client_secret or not refresh_token:
         return None
 
-    args = [
-        "curl", "-sL", "--max-time", str(_TIMEOUT),
-        "-X", "POST",
-        "-H", "Content-Type: application/x-www-form-urlencoded",
-        "-H", "Accept: application/json",
-        "-d", (f"grant_type=refresh_token&client_id={client_id}"
-               f"&client_secret={client_secret}&refresh_token={refresh_token}"),
-        _TOKEN_ENDPOINT,
-    ]
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=_TIMEOUT + 5)
+    proc = subprocess.run(
+        [
+            "curl", "-sL", "--max-time", str(_TIMEOUT),
+            "-X", "POST",
+            "-H", "Content-Type: application/x-www-form-urlencoded",
+            "-H", "Accept: application/json",
+            "-d", (f"grant_type=refresh_token&client_id={client_id}"
+                   f"&client_secret={client_secret}&refresh_token={refresh_token}"),
+            _TOKEN_ENDPOINT,
+        ],
+        capture_output=True, text=True, timeout=_TIMEOUT + 5,
+    )
     if proc.returncode != 0:
         print(f"ml.refresh curl exit {proc.returncode}: {proc.stderr[:100]}")
         return None
@@ -82,11 +144,9 @@ def _refresh_access_token() -> Optional[str]:
         return None
 
     if new_refresh and new_refresh != refresh_token:
-        print(
-            f"ml.refresh: ML ROTATED the refresh_token — old ended in "
-            f"...{refresh_token[-6:]}, new ends in ...{new_refresh[-6:]}. "
-            f"Update ML_REFRESH_TOKEN in GH secrets before next run."
-        )
+        # Update env so re-entry within the same process picks it up.
+        os.environ["ML_REFRESH_TOKEN"] = new_refresh
+        _write_back_refresh_token(new_refresh)
 
     _access_cache["token"] = access_token
     _access_cache["expires_at"] = time.time() + expires_in
@@ -107,69 +167,134 @@ def _brand_from_attributes(attrs: list[dict]) -> str:
     return ""
 
 
-def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
-    token = _get_access_token()
-    if not token:
-        return []
-
+def _fetch_catalog_products(token: str, termo: str) -> list[dict]:
+    """Return top catalog products (dicts) matching `termo`. Empty list on
+    error / empty result."""
     q = quote(termo, safe="")
-    url = f"{_SEARCH_ENDPOINT}?q={q}&limit={_MAX_RESULTS}&condition=new"
-
-    args = [
-        "curl", "-sL", "--max-time", str(_TIMEOUT),
-        "-H", f"Authorization: Bearer {token}",
-        "-H", "Accept: application/json",
-        url,
-    ]
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=_TIMEOUT + 5)
+    url = (
+        f"{_PRODUCTS_SEARCH}?q={q}&site_id=MLB&status=active"
+        f"&limit={_MAX_CATALOG_PRODUCTS}"
+    )
+    proc = subprocess.run(
+        [
+            "curl", "-sL", "--max-time", str(_TIMEOUT),
+            "-H", f"Authorization: Bearer {token}",
+            "-H", "Accept: application/json",
+            url,
+        ],
+        capture_output=True, text=True, timeout=_TIMEOUT + 5,
+    )
     if proc.returncode != 0:
         return []
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError:
         return []
-
-    # Expired token mid-run — clear cache and retry once
-    if isinstance(data, dict) and data.get("status") in (401, "401"):
-        _access_cache["token"] = None
-        token = _refresh_access_token()
-        if not token:
-            return []
-        args[args.index(f"Authorization: Bearer {token}") if False else 4] = f"Authorization: Bearer {token}"
-        # Simpler: full retry
-        return search(termo, marca_obrigatoria)
-
-    if not data.get("results"):
-        msg = data.get("message") or data.get("error") or ""
+    if not isinstance(data, dict) or not data.get("results"):
+        msg = (data or {}).get("message") or (data or {}).get("error") or ""
         if msg:
-            print(f"ml.search({termo!r}) empty: {msg}")
+            print(f"ml.products/search({termo!r}) empty: {msg}")
+        return []
+    return data["results"] or []
+
+
+def _fetch_items_for_product(token: str, product_id: str) -> list[dict]:
+    """Return the list of items (seller offers) for a catalog product.
+    Empty on 404 "No winners found" — many catalog products still lack any
+    linked seller listings."""
+    url = _PRODUCT_ITEMS.format(pid=product_id) + "?limit=100"
+    proc = subprocess.run(
+        [
+            "curl", "-sL", "--max-time", str(_TIMEOUT),
+            "-H", f"Authorization: Bearer {token}",
+            "-H", "Accept: application/json",
+            url,
+        ],
+        capture_output=True, text=True, timeout=_TIMEOUT + 5,
+    )
+    if proc.returncode != 0:
+        return []
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict) and data.get("results"):
+        return data["results"]
+    return []
+
+
+def _best_offer_from_items(items: list[dict]) -> Optional[dict]:
+    """Pick the item with the lowest total price (product + shipping cost).
+    Skips items without price or with obviously broken data."""
+    ranked: list[tuple[float, dict]] = []
+    for it in items:
+        preco = it.get("price")
+        if not preco or preco <= 0:
+            continue
+        shipping = it.get("shipping") or {}
+        frete = 0.0
+        if not shipping.get("free_shipping"):
+            cost = shipping.get("cost")
+            if isinstance(cost, (int, float)) and cost > 0:
+                frete = float(cost)
+        total = float(preco) + frete
+        ranked.append((total, it))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda r: r[0])
+    return ranked[0][1]
+
+
+def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
+    """One ProductResult per matching catalog product — its cheapest linked
+    seller offer. Downstream `rules.best_of()` picks the best across all
+    sites."""
+    token = _get_access_token()
+    if not token:
+        return []
+
+    products = _fetch_catalog_products(token, termo)
+    if not products:
         return []
 
     out: list[ProductResult] = []
-    for item in data.get("results", []) or []:
-        preco = float(item.get("price") or 0)
-        if preco <= 0:
+    for prod in products:
+        prod_id = prod.get("id") or ""
+        prod_name = prod.get("name") or ""
+        if not prod_id:
             continue
-        titulo = item.get("title", "") or ""
-        marca = _brand_from_attributes(item.get("attributes", []) or [])
-        pdp = item.get("permalink", "") or ""
-        available = int(item.get("available_quantity") or 0) > 0
-        preco_lista = float(item.get("original_price") or preco)
+        marca = _brand_from_attributes(prod.get("attributes") or [])
+        marca_ok = brand_confirmed_in(marca_obrigatoria, prod_name, marca)
+        # Skip early if the mandatory brand doesn't match — avoids the extra
+        # /items call for products that will be filtered out downstream anyway.
+        if marca_obrigatoria and not marca_ok:
+            continue
 
-        qtde = extract_qtde_unidades(titulo)
-        medida_val, medida_un = extract_medida(titulo)
-        marca_ok = brand_confirmed_in(marca_obrigatoria, titulo, marca)
+        items = _fetch_items_for_product(token, prod_id)
+        best = _best_offer_from_items(items)
+        if not best:
+            continue
+
+        preco = float(best.get("price") or 0)
+        preco_lista = float(best.get("original_price") or preco)
+        # Catalog PDP URL — lands on the product's aggregated page listing
+        # every seller. More useful than one seller's item URL.
+        pdp = f"https://www.mercadolivre.com.br/p/{prod_id}"
+
+        qtde = extract_qtde_unidades(prod_name)
+        medida_val, medida_un = extract_medida(prod_name)
 
         out.append(ProductResult(
-            site="ML", url=pdp, titulo=titulo,
+            site="ML", url=pdp, titulo=prod_name,
             preco=preco, preco_lista=preco_lista,
             marca_detectada=marca,
             qtde_unidades=qtde,
             preco_unidade=preco_por_unidade(preco, qtde),
-            disponivel=available,
+            disponivel=True,   # /items only returns active listings
             tem_oferta_clube=False,
             marca_confirmada=marca_ok,
-            sku_id="", seller_id="1",
+            sku_id="",
+            seller_id=str(best.get("seller_id") or "1"),
             medida_valor=medida_val,
             medida_unidade=medida_un,
         ))

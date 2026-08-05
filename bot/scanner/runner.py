@@ -131,10 +131,15 @@ def _spreadsheet_id() -> str:
 
 
 def _scrape_site(
-    site_key: str, termo: str, marca_obrigatoria: str
+    site_key: str, termo: str, marca_obrigatoria: str,
+    ml_query_override: str = "",
 ) -> list[ProductResult]:
     if site_key == "ML":
-        return mercadolivre.search(termo, marca_obrigatoria)
+        # /products/search do catálogo é sensível à ordem das palavras;
+        # ml_query_override permite ajustar por scanner sem afetar as
+        # queries dos outros sites.
+        q = ml_query_override.strip() or termo
+        return mercadolivre.search(q, marca_obrigatoria)
     if site_key in vtex.HOSTNAMES:
         return vtex.search(site_key, termo, marca_obrigatoria)
     print(f"runner: unknown site_key {site_key!r} — skipping")
@@ -200,7 +205,10 @@ def run(dry_run: bool = False) -> dict:
         for i, site_key in enumerate(alerta.sites):
             if i > 0:
                 time.sleep(0.5)  # be nice to APIs between sites
-            results = _scrape_site(site_key, alerta.termo_busca, alerta.marca_obrigatoria)
+            results = _scrape_site(
+                site_key, alerta.termo_busca, alerta.marca_obrigatoria,
+                ml_query_override=alerta.ml_query,
+            )
             filtered = _filter_by_intent(_filter_by_marca(results, alerta), alerta.termo_busca)
             site_best = rules.best_of(filtered)
             if site_best:

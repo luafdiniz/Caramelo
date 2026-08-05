@@ -97,6 +97,7 @@ def main() -> int:
         return 1
 
     refresh_token = data.get("refresh_token")
+    access_token = data.get("access_token")
     if not refresh_token:
         print("Response inválido — code pode ter expirado (dura ~30s).")
         print(f"Detalhes: {json.dumps(data, indent=2)[:500]}")
@@ -104,7 +105,41 @@ def main() -> int:
 
     print()
     print("=" * 70)
-    print("✓ REFRESH TOKEN OBTIDO — testando refresh flow antes de salvar...")
+    print("PASSO 2 — Testar o access_token do exchange numa busca REAL")
+    print("=" * 70)
+    print(f"access_token: {access_token[:20]}..." if access_token else "access_token: (ausente!)")
+
+    # Diagnostic: does the access_token that ML just handed us actually work
+    # against /sites/MLB/search? Separates "OAuth flow broken" (both fail) from
+    # "only refresh flow broken" (search works, refresh doesn't).
+    if access_token:
+        search_proc = subprocess.run(
+            [
+                "curl", "-sL", "--max-time", "20",
+                "-H", f"Authorization: Bearer {access_token}",
+                "-H", "Accept: application/json",
+                "https://api.mercadolibre.com/sites/MLB/search?q=leite&limit=1",
+            ],
+            capture_output=True, text=True, timeout=25,
+        )
+        try:
+            search_data = json.loads(search_proc.stdout)
+        except json.JSONDecodeError:
+            print(f"⚠️  busca resp não-JSON: {search_proc.stdout[:200]}")
+            search_data = {}
+
+        if isinstance(search_data, dict) and search_data.get("results"):
+            print(f"✅ access_token FUNCIONA — recebeu {len(search_data['results'])} resultado(s).")
+            print(f"   Isso confirma que OAuth em si tá OK; problema é SÓ no refresh flow.")
+        else:
+            msg = (search_data.get("message") or search_data.get("error")
+                   or str(search_data)[:300])
+            print(f"❌ access_token TAMBÉM falha na busca: {msg}")
+            print(f"   Isso indica bloqueio de app/conta, não bug no refresh.")
+
+    print()
+    print("=" * 70)
+    print("PASSO 3 — Testar refresh flow")
     print("=" * 70)
     print(f"Token recebido do exchange: {refresh_token}")
 

@@ -35,6 +35,11 @@ class AlertaConfig:
     # em 3 fornecedores diferentes). Usado por scanner.baselines pra buscar
     # última compra + menor histórico cross-fornecedor.
     codigos_planilha: list[str] = field(default_factory=list)
+    # Override do termo_busca só pra ML — o /products/search do catálogo
+    # unificado é sensível à ordem das palavras. Ex: "pote quadrado 220ml
+    # plastilania" não acha, mas "plastilania 220ml" acha. Vazio = usa
+    # `termo_busca`.
+    ml_query: str = ""
 
 
 def _parse_bool(v) -> bool:
@@ -75,14 +80,14 @@ def get_alertas(spreadsheet_id: str, service=None) -> list[AlertaConfig]:
     """Load every row of Scanner_Alertas, active or not."""
     service = service or sheets.get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A2:O"
+        spreadsheetId=spreadsheet_id, range="Scanner_Alertas!A2:P"
     ).execute()
     rows = result.get("values", [])
     out: list[AlertaConfig] = []
     for r in rows:
         if not r or not r[0]:
             continue
-        r = list(r) + [""] * (15 - len(r))
+        r = list(r) + [""] * (16 - len(r))
         sites_raw = r[4] or ""
         sites = [s.strip() for s in sites_raw.split(",") if s.strip() in VALID_SITES]
         codigos = [c.strip() for c in (r[14] or "").split(",") if c.strip()]
@@ -102,6 +107,7 @@ def get_alertas(spreadsheet_id: str, service=None) -> list[AlertaConfig]:
             snooze_ate=_parse_iso_datetime(r[12]),
             qtde_bulk=_parse_int(r[13], default=1),
             codigos_planilha=codigos,
+            ml_query=(r[15] or "").strip(),
         ))
     return out
 
