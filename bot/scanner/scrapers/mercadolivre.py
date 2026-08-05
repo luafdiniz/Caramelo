@@ -299,6 +299,11 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
             continue
 
         items = _fetch_items_for_product(token, prod_id)
+        # Debug — quantos vendedores o catálogo desse product retornou.
+        # Ajuda a entender por que o outlier filter (que exige 3+ listings)
+        # pode não ter disparado num alerta suspeito.
+        prices_dbg = sorted([it.get("price", 0) for it in items if it.get("price")])
+        print(f"ml.search({termo!r}): PID={prod_id} items={len(items)} prices={prices_dbg[:5]}")
         best = _best_offer_from_items(items)
         if not best:
             continue
