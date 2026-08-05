@@ -261,9 +261,21 @@ def _parse_json(raw: str) -> dict:
     raw = re.sub(r"^```(?:json)?\s*", "", (raw or "").strip())
     raw = re.sub(r"\s*```$", "", raw)
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Gemini returned invalid JSON: {e}\nRaw: {raw[:500]}")
+        # Log full raw so operator can inspect what Gemini actually replied.
+        # Real case 2026-08-05: user sent NF-e image while a feira was open;
+        # Gemini couldn't fit into venda/fechamento/status schema, returned
+        # partial JSON like '\n"intent"...' and the whole flow crashed.
+        print(f"gemini._parse_json: JSONDecodeError {e}")
+        print(f"gemini._parse_json: RAW response (full): {raw!r}")
+        raise ValueError(f"Gemini returned invalid JSON: {e}")
+    if not isinstance(parsed, dict):
+        # Defensive — if Gemini decided to return a string/list/null, treat
+        # as empty dict rather than blowing up on parsed.get(...) downstream.
+        print(f"gemini._parse_json: got {type(parsed).__name__} not dict: {parsed!r}")
+        return {}
+    return parsed
 
 
 def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg", api_key: Optional[str] = None) -> str:

@@ -213,13 +213,23 @@ def handle_image(chat_id: int, image_bytes: bytes) -> bool:
     try:
         parsed = gemini.parse_feira_image(image_bytes, produtos=f["produtos"])
     except Exception as e:
-        tg.send_message(chat_id, f"❌ Não consegui ler a imagem: <code>{_esc(e)}</code>")
+        # Comum durante feira aberta: usuário manda foto de NF-e/comprovante
+        # de compra ao invés de anotação de venda; Gemini não classifica em
+        # nenhum intent e o parse falha. Ao invés de mostrar exceção crua,
+        # oferecer opção de registrar como compra.
+        print(f"feira_flow.handle_image: parse_feira_image falhou: {e}")
+        tg.send_message(
+            chat_id,
+            "🤔 Não entendi essa imagem no contexto da feira. Se for anotação de venda, "
+            "manda como texto (ex: <i>vendi 2 de 200g</i>). Se for uma nota fiscal, "
+            "encerra a feira com /fechar e reenvia a foto — aí ela vira compra.",
+        )
         return True
     return _dispatch(chat_id, f, parsed)
 
 
 def _dispatch(chat_id: int, f: dict, parsed: dict) -> bool:
-    intent = parsed.get("intent", "outro")
+    intent = (parsed or {}).get("intent", "outro")
     if intent == "venda":
         return _register_venda(chat_id, f, parsed)
     if intent == "fechamento":
@@ -230,6 +240,7 @@ def _dispatch(chat_id: int, f: dict, parsed: dict) -> bool:
     tg.send_message(
         chat_id,
         "🤔 Não entendi se foi uma venda. Tenta: <i>vendi 2 de 200g pro fulano</i>.\n"
+        "Se for uma nota fiscal, encerra com /fechar e reenvia.\n"
         "Parcial: /feira_status · encerrar: /fechar",
     )
     return True
