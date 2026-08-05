@@ -253,23 +253,27 @@ def _best_offer_from_items(items: list[dict]) -> Optional[dict]:
         return None
     ranked.sort(key=lambda r: r[0])
 
-    # Outlier filter: with 3+ listings, drop leading ones priced under 30%
-    # of the median. Comparing against the median (not against the next
-    # cheapest) avoids cascading-drops when two shill listings sit side by
-    # side. Two-listing PDPs are left alone — no group to derive a signal.
-    while len(ranked) >= 3:
+    # Outlier filter: with 3+ listings, drop any priced under 30% of the
+    # *original* median. Single-pass — recomputing after each drop makes
+    # the median chase upward and cascades into dropping legitimate deals
+    # (visto 2026-08-05: forma pudim 500ml a R\$ 4/un foi eliminada porque
+    # após remover R\$ 1,64 a mediana subiu pra R\$ 27, e R\$ 4 virou outlier).
+    if len(ranked) >= 3:
         median_p = statistics.median([r[0] for r in ranked])
-        if ranked[0][0] < median_p * 0.3:
-            dropped_price = ranked[0][0]
-            seller = ranked[0][1].get("seller_id")
-            print(
-                f"ml.items: descartando outlier R$ {dropped_price:.2f} "
-                f"(seller {seller}) — mediana é R$ {median_p:.2f}"
-            )
-            ranked = ranked[1:]
-        else:
-            break
+        threshold = median_p * 0.3
+        kept = []
+        for total, item in ranked:
+            if total < threshold:
+                print(
+                    f"ml.items: descartando outlier R$ {total:.2f} "
+                    f"(seller {item.get('seller_id')}) — mediana é R$ {median_p:.2f}"
+                )
+                continue
+            kept.append((total, item))
+        ranked = kept
 
+    if not ranked:
+        return None
     return ranked[0][1]
 
 
@@ -332,27 +336,24 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
             medida_unidade=medida_un,
         ))
 
-    # Cross-catalog-product outlier filter. A single catalog product with
-    # just one listing bypasses `_best_offer_from_items` (which requires 3+
-    # to trigger). But when the search returns 3+ catalog products, we can
-    # compare THEIR unit prices — if one is <30% of the median of the group,
-    # it's the same "shill seller" pattern one level up. Real case: SCA-003
-    # (leite integral) retornava um MLB54115700 solitário a R\$ 8 que
-    # ganhava por ser o menor entre os catalog products.
-    while len(out) >= 3:
-        out.sort(key=lambda r: r.preco_unidade)
+    # Cross-catalog-product outlier filter — mesmo princípio da regra
+    # dentro de _best_offer_from_items, mas comparando preco_unidade
+    # entre catalog products distintos. Single-pass sobre a mediana
+    # original pra não recalcular e cascatear em cima de ofertas reais.
+    if len(out) >= 3:
         prices = [r.preco_unidade for r in out if r.preco_unidade > 0]
-        if len(prices) < 3:
-            break
-        median_pu = statistics.median(prices)
-        if out[0].preco_unidade > 0 and out[0].preco_unidade < median_pu * 0.3:
-            dropped = out[0]
-            print(
-                f"ml.search: descartando catalog outlier {dropped.url} "
-                f"@ R$ {dropped.preco_unidade:.3f}/un — mediana é R$ {median_pu:.3f}/un"
-            )
-            out = out[1:]
-        else:
-            break
+        if len(prices) >= 3:
+            median_pu = statistics.median(prices)
+            threshold = median_pu * 0.3
+            kept = []
+            for r in out:
+                if r.preco_unidade > 0 and r.preco_unidade < threshold:
+                    print(
+                        f"ml.search: descartando catalog outlier {r.url} "
+                        f"@ R$ {r.preco_unidade:.3f}/un — mediana é R$ {median_pu:.3f}/un"
+                    )
+                    continue
+                kept.append(r)
+            out = kept
 
     return out

@@ -48,13 +48,26 @@ def test_freight_included_in_ranking():
     assert best["seller_id"] == "B"
 
 
-def test_multiple_outliers_all_dropped():
-    """Iterative: after dropping the first outlier, re-evaluate the median."""
+def test_multiple_outliers_dropped_against_original_median():
+    """Two shills far below the median — both dropped in one pass. Uses
+    the ORIGINAL median (not recomputed) so we don't cascade into
+    dropping legitimate cheap listings."""
     items = [_item(1, seller="shill1"), _item(5, seller="shill2"),
              _item(50, seller="A"), _item(60, seller="B")]
-    # Start median=(5+50)/2=27.5, threshold=8.25 → drop 1.
-    # Now median of [5,50,60]=50, threshold=15 → drop 5.
-    # Now [50,60], only 2 items → stop. Best = 50.
+    # median = (5+50)/2 = 27.5, threshold = 8.25 → both 1 and 5 dropped.
+    best = _best_offer_from_items(items)
+    assert best["seller_id"] == "A"
+
+
+def test_legit_cheap_deal_survives_when_close_to_median():
+    """Regression from 2026-08-05: iterative filter was chasing the median
+    upward and dropping a real R$ 4/un deal after removing a R$ 1,6
+    outlier. Single-pass keeps it."""
+    # Ordered totals: [1.64, 4.17, 17.9, 39.9]
+    # median = (4.17+17.9)/2 = 11.035, threshold = 3.31.
+    # Only 1.64 dropped; 4.17 survives.
+    items = [_item(1.64, seller="shill"), _item(4.17, seller="A"),
+             _item(17.9, seller="B"), _item(39.9, seller="C")]
     best = _best_offer_from_items(items)
     assert best["seller_id"] == "A"
 
