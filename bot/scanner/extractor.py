@@ -14,7 +14,9 @@ from rapidfuzz import fuzz
 
 
 _QTDE_PATTERNS = [
-    re.compile(r'\b(\d+)\s*unidades?\b', re.IGNORECASE),
+    # "unidade"/"unidades"/"unid"/"unids" — captura variações abreviadas
+    # comuns em títulos do ML tipo "10 Unid" ou "300 Un Transparente".
+    re.compile(r'\b(\d+)\s*unida?d?e?s?\b', re.IGNORECASE),
     re.compile(r'\b(\d+)\s*un\b\.?', re.IGNORECASE),
     re.compile(r'\bcx\.?\s*(\d+)\b', re.IGNORECASE),
     re.compile(r'\bcaixa\s+(?:com\s+)?(\d+)\b', re.IGNORECASE),
@@ -22,7 +24,7 @@ _QTDE_PATTERNS = [
     re.compile(r'\bpack\s*(\d+)\b', re.IGNORECASE),
     re.compile(r'\bkit\s*(?:c/|com)?\s*(\d+)\b', re.IGNORECASE),
     re.compile(r'\bc/\s*(\d+)\s*un', re.IGNORECASE),
-    re.compile(r'\bcom\s+(\d+)\s+unidades', re.IGNORECASE),
+    re.compile(r'\bcom\s+(\d+)\s+unida?d?e?s?', re.IGNORECASE),
 ]
 
 

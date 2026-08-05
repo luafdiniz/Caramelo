@@ -305,17 +305,12 @@ def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
             continue
 
         items = _fetch_items_for_product(token, prod_id)
-        # Debug — quantos vendedores o catálogo desse product retornou.
-        prices_dbg = sorted([it.get("price", 0) for it in items if it.get("price")])
-        print(f"ml.search({termo!r}): PID={prod_id} items={len(items)} prices={prices_dbg[:5]}")
 
         # Filter: catalog products com só 1 vendedor tendem a ser anúncios
         # de sellers com 0 vendas listando preços absurdos pra atrair. Um
         # produto real tem múltiplos vendedores. (Real 2026-08-05: SCA-003
-        # pegava MLB54115700 solitário a R\$ 8 e virava 🔥 falso positivo.)
+        # pegava MLB54115700 solitário a R$ 8 e virava 🔥 falso positivo.)
         if len(items) < 2:
-            if items:
-                print(f"ml.search: pulando {prod_id} — só 1 vendedor")
             continue
 
         best = _best_offer_from_items(items)
