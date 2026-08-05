@@ -253,20 +253,22 @@ def _best_offer_from_items(items: list[dict]) -> Optional[dict]:
         return None
     ranked.sort(key=lambda r: r[0])
 
-    # Outlier filter: with 3+ listings, drop any priced under 30% of the
-    # *original* median. Single-pass — recomputing after each drop makes
-    # the median chase upward and cascades into dropping legitimate deals
-    # (visto 2026-08-05: forma pudim 500ml a R\$ 4/un foi eliminada porque
-    # após remover R\$ 1,64 a mediana subiu pra R\$ 27, e R\$ 4 virou outlier).
+    # Outlier filter: comparação por PRICE BASE (não total com frete). Um
+    # shill lista price=R\$ 8 e frete pode virar R\$ 40+, mascarando o
+    # sinal se olharmos o total. Median-based single-pass — recomputing
+    # cascatava em cima de ofertas reais (visto 2026-08-05).
     if len(ranked) >= 3:
-        median_p = statistics.median([r[0] for r in ranked])
-        threshold = median_p * 0.3
+        base_prices = [float(it.get("price") or 0) for _, it in ranked]
+        median_base = statistics.median(base_prices)
+        threshold = median_base * 0.3
         kept = []
         for total, item in ranked:
-            if total < threshold:
+            base = float(item.get("price") or 0)
+            if base > 0 and base < threshold:
                 print(
-                    f"ml.items: descartando outlier R$ {total:.2f} "
-                    f"(seller {item.get('seller_id')}) — mediana é R$ {median_p:.2f}"
+                    f"ml.items: descartando outlier R$ {base:.2f} base "
+                    f"(total R$ {total:.2f}, seller {item.get('seller_id')}) "
+                    f"— mediana base R$ {median_base:.2f}"
                 )
                 continue
             kept.append((total, item))
