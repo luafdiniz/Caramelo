@@ -69,6 +69,44 @@ _SPEC_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Alguns sites (ex: Maria Chocolate) descrevem formas de pudim por
+# DIMENSÕES em cm em vez de volume nominal. Sem esse mapping, uma busca
+# por "500ml" não bate no título "Forma para Pudim 16x6 cm c/ 6 unidades".
+# Confirmado 2026-08-07 nas páginas da Maria Chocolate; outros catálogos
+# Plastilania podem seguir a mesma convenção.
+_DIMENSIONS_TO_VOLUME_ML = {
+    "8x5x4": 80,      # Mini 80ml (20un/pack)
+    "9x6,5x4": 220,   # Quadrado 220ml (10un/pack)
+    "9x65x4": 220,    # variação sem vírgula
+    "16x6": 500,      # Grande Oitavada 500ml (6un/pack)
+    # Nota: 1,1L Família não achado no catálogo Maria Chocolate hoje.
+    # Adicionar aqui quando aparecer.
+}
+_DIMENSION_PATTERN = re.compile(
+    r'\b(\d+(?:[.,]\d+)?(?:x\d+(?:[.,]\d+)?){1,3})\s*cm\b',
+    re.IGNORECASE,
+)
+
+
+def _derive_specs_from_dimensions(text: str) -> set[str]:
+    """Return normalized volume specs implied by dimensions in the text.
+    Ex: 'Forma 16x6 cm c/ 6 un' → {'500ml', '0.5l'}."""
+    out: set[str] = set()
+    if not text:
+        return out
+    for match in _DIMENSION_PATTERN.findall(text):
+        key = match.lower().replace(" ", "")
+        volume_ml = _DIMENSIONS_TO_VOLUME_ML.get(key)
+        if volume_ml is None:
+            continue
+        out.add(f"{volume_ml}ml")
+        # Also add liters form (500ml → 0.5l)
+        as_l = volume_ml / 1000.0
+        # Match how spec_tokens formats: no trailing zeros, decimal point.
+        as_l_str = f"{as_l:g}"
+        out.add(f"{as_l_str}l")
+    return out
+
 _KEYWORD_PATTERN = re.compile(
     r'\b(condensado|integral|refinado|cristal|desnatado|semidesnatado|leve|zero|light)\b',
     re.IGNORECASE,
@@ -143,9 +181,15 @@ def matches_search_intent(termo: str, titulo: str) -> bool:
         return True
 
     titulo_norm = _normalize(titulo).lower().replace(" ", "")
+    # Enriquece o título com specs implícitos de dimensões conhecidas
+    # (ex: "16x6 cm" → conta como se tivesse "500ml" no título).
+    derived_specs = _derive_specs_from_dimensions(titulo)
     for spec in spec_tokens(termo):
-        if spec not in titulo_norm:
-            return False
+        if spec in titulo_norm:
+            continue
+        if spec in derived_specs:
+            continue
+        return False
 
     termo_words = _significant_words(termo)
     if not termo_words:
