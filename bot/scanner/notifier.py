@@ -158,6 +158,22 @@ def build_message(
         "",
     ]
 
+    # Preço absoluto da oferta — sempre visível. Sem isso, alertas do ML
+    # (que não tem frete_curve) mostravam só deltas percentuais nas
+    # Referências sem o valor R$ da oferta.
+    preco_nominal = float(produto.preco or 0)
+    preco_un = float(produto.preco_unidade or 0)
+    qtde = int(produto.qtde_unidades or 1)
+    if preco_nominal > 0:
+        if qtde > 1:
+            lines.append(
+                f"💰 <b>{_fmt_brl(preco_nominal)}</b> ({qtde} un) → "
+                f"<b>{_fmt_brl(preco_un)}</b>/un"
+            )
+        else:
+            lines.append(f"💰 <b>{_fmt_brl(preco_nominal)}</b>/un")
+        lines.append("")
+
     # Promo callout — text depends on the type of promo:
     #  - "no 2°" / "no 3°" / "compre X leve Y": show the group price/un
     #  - anything else (10% off, R$ X off, progressive): just the name
