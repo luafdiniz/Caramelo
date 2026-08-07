@@ -32,7 +32,7 @@ from scanner import (
     config, email_notifier, extractor, frete as frete_mod,
     frete_overrides, history as history_mod, notifier, rules,
 )
-from scanner.scrapers import mercadolivre, vtex
+from scanner.scrapers import mariachocolate, mercadolivre, vtex
 from scanner.scrapers.base import ProductResult
 
 
@@ -140,6 +140,8 @@ def _scrape_site(
         # queries dos outros sites.
         q = ml_query_override.strip() or termo
         return mercadolivre.search(q, marca_obrigatoria)
+    if site_key == "mariachocolate":
+        return mariachocolate.search(termo, marca_obrigatoria)
     if site_key in vtex.HOSTNAMES:
         return vtex.search(site_key, termo, marca_obrigatoria)
     print(f"runner: unknown site_key {site_key!r} — skipping")

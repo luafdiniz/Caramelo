@@ -48,6 +48,7 @@ _SITE_LABEL = {
     "apoio": "Apoio Entrega",
     "santoantonio": "Santo Antônio",
     "ML": "Mercado Livre",
+    "mariachocolate": "Maria Chocolate",
 }
 
 _SEVERITY_LABEL = {

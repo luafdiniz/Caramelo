@@ -11,7 +11,7 @@ from typing import Optional
 from lib import sheets
 
 
-VALID_SITES = {"ML", "supernosso", "apoio", "santoantonio"}
+VALID_SITES = {"ML", "supernosso", "apoio", "santoantonio", "mariachocolate"}
 
 
 @dataclass
