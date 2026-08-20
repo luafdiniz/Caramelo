@@ -1,15 +1,22 @@
-"""Maria Chocolate scraper — HTML server-side (Apache/CakePHP).
+"""Maria Chocolate scraper — Nuvemshop (mitiendanube) storefront.
 
-Diferente do VTEX (que tem catalog API JSON), Maria Chocolate serve HTML
-puro. Cada produto na página de busca tem esta estrutura:
+A loja migrou de plataforma (era HTML CakePHP com <span class="product-big-price">;
+agora é Nuvemshop). Mudanças que quebraram a v1:
+- A rota de busca virou `/search?q=` (a antiga `/busca?q=` responde 404 com uma
+  página genérica).
+- Cada card é uma div `class="js-item-product ..."` com:
+    - `data-product-id="NNN"`
+    - nome em `<... js-item-name ...>NOME`
+    - link em `href=".../produtos/SLUG/"`
+    - preço de venda em `data-product-price="CENTAVOS"` (ex 3300 = R$ 33,00)
+  Os preços NÃO estão mais em texto R$ no HTML (aparecem "R$0,00" e são
+  preenchidos por JS), mas o valor real está no atributo `data-product-price`,
+  então dá pra ler sem navegador headless.
 
-    <div class="product-name">
-      <a href="URL"><h2>NOME</h2></a>
-    </div>
-    <p class="product-price">
-      <span class="product-big-price"><ins>R$ 16,80</ins></span>
-    </p>
-    <p class="product-unit">... Unitário</p>
+Observação de catálogo: a busca full-text é estrita (AND das palavras). A loja
+carrega descartáveis Plastilânia (potes, colheres, copos), mas NÃO as formas de
+pudim — logo "forma pudim 500ml plastilania" volta vazio aqui de propósito
+(ML/santoantonio cobrem as formas).
 
 Frete: sem cálculo — mesmo esquema do ML. O runner deixa
 `preco_com_frete = preco` pra sites fora do VTEX.
@@ -31,42 +38,29 @@ from scanner.scrapers.base import ProductResult
 
 
 _BASE = "https://www.mariachocolate.com.br"
-_SEARCH_URL = _BASE + "/busca?q={q}"
+_SEARCH_URL = _BASE + "/search?q={q}"
 _TIMEOUT = 20
 _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-# Product block on the search page. `.*?` between fields is non-greedy so
-# we don't accidentally match across blocks.
-_PRODUCT_BLOCK = re.compile(
-    r'<div class="product-name">'
-    r'<a href="([^"]+)"[^>]*>'
-    r'<h2>([^<]+)</h2>'
-    r'.*?'
-    r'<span class="product-big-price"><ins>R\$\s*([\d.]+,\d{2})</ins></span>'
-    r'.*?'
-    r'<p class="product-unit">',
-    re.S,
-)
-
-
-def _parse_brl(s: str) -> float:
-    """'16,80' or '1.234,56' → float."""
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
+# Per-product card. The storefront wraps each result in a div whose class
+# starts with "js-item-product". We split on that marker and pull the fields
+# out of each chunk (regex per chunk, not one giant cross-card regex).
+_CARD_SPLIT = re.compile(r'class="js-item-product')
+_RE_NAME = re.compile(r'js-item-name[^>]*>\s*([^<]{3,150})')
+_RE_HREF = re.compile(r'href="(' + re.escape(_BASE) + r'/produtos/[^"]+)"')
+_RE_PRICE = re.compile(r'data-product-price="(\d+)"')
 
 
 def _fetch_search(termo: str) -> str:
     """Return the raw HTML of the search results page. Empty string on
-    error — caller just gets no results."""
+    error — caller just gets no results.
+
+    The storefront returns HTTP 200 for `/search?q=`; even on odd statuses we
+    only care about the body, so we don't gate on HTTP code (curl returncode
+    catches real transport failures)."""
     url = _SEARCH_URL.format(q=quote(termo, safe=""))
     proc = subprocess.run(
         [
@@ -83,19 +77,24 @@ def _fetch_search(termo: str) -> str:
 
 
 def search(termo: str, marca_obrigatoria: str = "") -> list[ProductResult]:
-    """One ProductResult per product on the search results page.
+    """One ProductResult per product card on the search results page.
     Downstream rules.best_of picks the best across all sites."""
     html = _fetch_search(termo)
     if not html:
         return []
 
     out: list[ProductResult] = []
-    for url_rel, nome, preco_raw in _PRODUCT_BLOCK.findall(html):
-        preco = _parse_brl(preco_raw)
+    for card in _CARD_SPLIT.split(html)[1:]:
+        m_name = _RE_NAME.search(card)
+        m_price = _RE_PRICE.search(card)
+        if not m_name or not m_price:
+            continue
+        preco = int(m_price.group(1)) / 100.0
         if preco <= 0:
             continue
-        titulo = re.sub(r"\s+", " ", nome).strip()
-        url = url_rel if url_rel.startswith("http") else _BASE + url_rel
+        titulo = re.sub(r"\s+", " ", m_name.group(1)).strip()
+        m_href = _RE_HREF.search(card)
+        url = m_href.group(1) if m_href else _BASE
 
         qtde = extract_qtde_unidades(titulo)
         medida_val, medida_un = extract_medida(titulo)
