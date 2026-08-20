@@ -34,7 +34,12 @@ _UA = (
 )
 
 _TIMEOUT = 15
-_MAX_RESULTS = 10
+# 20 (não 10): a busca full-text do VTEX mistura tamanhos ("forma pudim ..."
+# devolve 80ml/120ml/250ml/500ml/1100ml juntos) e a ordenação varia por
+# IP/região. Com janela de 10 o item do tamanho certo (ex: forma 1100ml no
+# santoantonio) caía fora do corte no runner do GitHub, virando "no valid
+# result" mesmo existindo. 20 dá folga sem pesar.
+_MAX_RESULTS = 20
 
 
 def _curl_get_json(url: str) -> list | dict:
