@@ -54,7 +54,13 @@ def _curl_get_json(url: str) -> list | dict:
     body = proc.stdout
     if body.startswith("Bad Request") or body.startswith("Forbidden"):
         raise RuntimeError(f"upstream rejected: {body[:100]}")
-    return json.loads(body)
+    # strict=False tolerates raw control characters (unescaped newlines/tabs)
+    # that VTEX sometimes leaves inside product-description strings. With the
+    # default strict parser those responses raised JSONDecodeError and the
+    # whole site silently returned zero results (e.g. supernosso "leite
+    # condensado cemil", santoantonio "forma pudim ..."), even though the
+    # products were right there in the payload.
+    return json.loads(body, strict=False)
 
 
 def _extract_offer(product: dict) -> tuple[float, float, bool, bool, str, str, list[str]]:
