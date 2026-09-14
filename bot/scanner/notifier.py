@@ -71,11 +71,11 @@ _SEVERITY_HEADER = {
 }
 
 
-def _chat_ids() -> list[int]:
-    raw = os.environ.get("ALERT_CHAT_IDS", "").strip()
+def _chat_ids(env_var: str = "ALERT_CHAT_IDS") -> list[int]:
+    raw = os.environ.get(env_var, "").strip()
     if not raw:
         raise RuntimeError(
-            "ALERT_CHAT_IDS env var not configured — set it to a "
+            f"{env_var} env var not configured — set it to a "
             "comma-separated list of Telegram chat IDs."
         )
     ids: list[int] = []
@@ -88,8 +88,17 @@ def _chat_ids() -> list[int]:
         except ValueError:
             print(f"notifier: ignoring invalid chat_id {x!r}")
     if not ids:
-        raise RuntimeError("ALERT_CHAT_IDS parsed to empty list")
+        raise RuntimeError(f"{env_var} parsed to empty list")
     return ids
+
+
+def _summary_chat_ids() -> list[int]:
+    """Recipients for the weekly pulse. Prefer SUMMARY_CHAT_IDS (so the
+    reassurance digest can go to Luiza only, not the Fila group), falling
+    back to ALERT_CHAT_IDS when that secret isn't set."""
+    if os.environ.get("SUMMARY_CHAT_IDS", "").strip():
+        return _chat_ids("SUMMARY_CHAT_IDS")
+    return _chat_ids("ALERT_CHAT_IDS")
 
 
 def _fmt_brl(value: Optional[float]) -> str:
@@ -297,6 +306,54 @@ def send_offer(
         except Exception as e:
             print(f"notifier: send to {cid} failed: {e}")
     return message_ids
+
+
+def send_weekly_summary(
+    rows: list[dict],
+    periodo: str,
+    total_scans: int,
+    dry_run: bool = False,
+) -> None:
+    """Weekly proof-of-life digest: confirms the scanner is running and lists
+    the cheapest delivered unit price seen this week per insumo.
+
+    `rows` is one dict per active scanner:
+        {"insumo_nome", "preco_unidade", "site", "scans", "sem_dados": bool}
+    `periodo` is a human range like "08–14/set"; `total_scans` the week's total.
+    """
+    lines = [
+        "🍮 <b>Scanner de preços — resumo semanal</b>",
+        f"Período: {_esc(periodo)} · {total_scans} verificação(ões) ✅",
+        "",
+        "<b>Menor preço da semana (entregue/un):</b>",
+    ]
+    any_gap = False
+    for r in rows:
+        nome = _esc(r["insumo_nome"])
+        if r.get("sem_dados"):
+            any_gap = True
+            lines.append(f"• {nome} — ⚠️ sem dados essa semana")
+            continue
+        site = _esc(r.get("site", ""))
+        lines.append(f"• {nome} — {_fmt_brl(r['preco_unidade'])}/un ({site})")
+
+    lines.append("")
+    if any_gap:
+        lines.append("⚠️ Itens sem dados podem indicar scraper com problema — vale checar.")
+    else:
+        lines.append("Tudo no ar. Nenhuma queda disparou alerta essa semana.")
+
+    text = "\n".join(lines)
+    if dry_run:
+        print("---- DRY RUN weekly summary ----")
+        print(text)
+        print("--------------------------------")
+        return
+    for cid in _summary_chat_ids():
+        try:
+            telegram_client.send_message(cid, text)
+        except Exception as e:
+            print(f"weekly summary: send to {cid} failed: {e}")
 
 
 def send_heartbeat_alert(offline: list[dict], dry_run: bool = False) -> None:
