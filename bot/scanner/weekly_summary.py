@@ -43,11 +43,21 @@ def _fmt_periodo(start: datetime, end: datetime) -> str:
             f"{end.day:02d}/{_MESES[end.month - 1]}")
 
 
+# How close to the newest reading an observation must be to still count as
+# "current". The runner scans ~2x/day, so 36h comfortably covers the latest
+# round while excluding a site that stopped responding days ago (its stale
+# price must NOT be shown as "preço do momento").
+_RECENT_WINDOW = timedelta(hours=36)
+
+
 def build_rows(now: datetime) -> tuple[list[dict], int]:
     """Return (rows, total_scans) for the last WINDOW_DAYS.
 
-    One row per active scanner with the cheapest delivered unit price in the
-    window; `sem_dados=True` when nothing was observed (a red flag)."""
+    One row per active scanner with the CURRENT cheapest delivered unit price
+    (cheapest site in the most recent scan round), not the weekly low — a
+    weekly low may no longer be purchasable and would mislead a buy decision.
+    `total_scans` over the whole window is the proof-of-life count.
+    `sem_dados=True` when nothing was observed recently (a red flag)."""
     sid = _spreadsheet_id()
     service = sheets.get_service()
 
@@ -59,7 +69,7 @@ def build_rows(now: datetime) -> tuple[list[dict], int]:
     total_scans = 0
     for a in alertas:
         obs_list = sheets.get_precos_observados_by_scanner(sid, a.scanner_id, service=service)
-        window = []
+        window = []  # (ts, obs) within the 7-day window with a real price
         for o in obs_list:
             ts_raw = _normalize_timestamp(o.get("timestamp"))
             try:
@@ -67,14 +77,19 @@ def build_rows(now: datetime) -> tuple[list[dict], int]:
             except ValueError:
                 continue
             if ts >= cutoff and (o.get("preco_unidade") or 0) > 0:
-                window.append(o)
+                window.append((ts, o))
 
         total_scans += len(window)
         nome = produtos.get(a.insumo_id, a.insumo_id)
         if not window:
             rows.append({"insumo_nome": nome, "sem_dados": True})
             continue
-        best = min(window, key=lambda o: o["preco_unidade"])
+
+        # "Preço do momento": among the most recent scan round only, take the
+        # cheapest site. A site that went quiet drops out naturally.
+        newest_ts = max(ts for ts, _ in window)
+        recent = [o for ts, o in window if newest_ts - ts <= _RECENT_WINDOW]
+        best = min(recent, key=lambda o: o["preco_unidade"])
         rows.append({
             "insumo_nome": nome,
             "preco_unidade": best["preco_unidade"],

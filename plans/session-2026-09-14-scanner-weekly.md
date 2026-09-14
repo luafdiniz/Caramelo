@@ -12,8 +12,11 @@ o `daily_summary` só manda e-mail quando tem oferta.
 Pulso semanal de prova-de-vida (aprovado pela Luiza).
 
 - `bot/scanner/weekly_summary.py` — lê `Precos_Observados` dos últimos 7 dias
-  por scanner ativo, pega o menor preço/un entregue + site, conta scans
-  (prova de vida), marca ⚠️ item sem dado. Sempre envia.
+  por scanner ativo. Mostra o **preço do momento** (leitura mais recente, últimas
+  36h — cheapest site na rodada atual), NÃO o menor da semana (um menor
+  histórico pode não existir mais e induziria a compra errada — decisão da Luiza
+  2026-09-14). Conta scans na janela de 7d (prova de vida), marca ⚠️ item sem
+  leitura recente. Sempre envia.
 - `bot/scanner/notifier.py` — `send_weekly_summary()` (formato Telegram, espelha
   `send_heartbeat_alert`). `_chat_ids()` agora aceita `env_var`; novo
   `_summary_chat_ids()` prefere `SUMMARY_CHAT_IDS`, cai pra `ALERT_CHAT_IDS`.

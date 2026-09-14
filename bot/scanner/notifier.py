@@ -325,23 +325,24 @@ def send_weekly_summary(
         "🍮 <b>Scanner de preços — resumo semanal</b>",
         f"Período: {_esc(periodo)} · {total_scans} verificação(ões) ✅",
         "",
-        "<b>Menor preço da semana (entregue/un):</b>",
+        "Preços estáveis, nada a alertar essa semana. "
+        "Seguem os <b>preços do momento</b> (entregue/un):",
     ]
     any_gap = False
     for r in rows:
         nome = _esc(r["insumo_nome"])
         if r.get("sem_dados"):
             any_gap = True
-            lines.append(f"• {nome} — ⚠️ sem dados essa semana")
+            lines.append(f"• {nome} — ⚠️ sem leitura recente")
             continue
         site = _esc(r.get("site", ""))
         lines.append(f"• {nome} — {_fmt_brl(r['preco_unidade'])}/un ({site})")
 
-    lines.append("")
     if any_gap:
-        lines.append("⚠️ Itens sem dados podem indicar scraper com problema — vale checar.")
-    else:
-        lines.append("Tudo no ar. Nenhuma queda disparou alerta essa semana.")
+        lines.append("")
+        lines.append("⚠️ Item sem leitura recente pode ser scraper com problema — vale checar.")
+    lines.append("")
+    lines.append("<i>As quedas de preço são avisadas na hora, à parte deste resumo.</i>")
 
     text = "\n".join(lines)
     if dry_run:
