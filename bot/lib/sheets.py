@@ -234,6 +234,7 @@ def append_preco_observado(
     titulo: str,
     frete: float = 0.0,
     preco_com_frete: float = 0.0,
+    is_best: bool = True,
     service=None,
 ) -> None:
     """Append one scan observation. Uses APPEND so concurrent runs are safe.
@@ -241,6 +242,11 @@ def append_preco_observado(
     `preco_unidade` here is the *delivered* unit price (includes rateio of
     frete). Columns K/L store the raw frete value and total-with-frete for
     audit/debug.
+
+    `is_best` (col M) marks whether this row was the cheapest-delivered site of
+    the scan (the "winner"). Only winners feed the alert baseline
+    (history._load_scans filters on it); the non-winning rows are stored purely
+    so per-site price charts have data. Legacy rows (no col M) count as winners.
     """
     service = service or get_service()
     row = [[
@@ -256,12 +262,13 @@ def append_preco_observado(
         titulo or "",
         frete,
         preco_com_frete,
+        "TRUE" if is_best else "FALSE",
     ]]
     # RAW so the timestamp stays as an ISO string and doesn't get coerced
     # into a Sheets date-serial (breaks history.py parsing).
     service.spreadsheets().values().append(
         spreadsheetId=spreadsheet_id,
-        range="Precos_Observados!A:L",
+        range="Precos_Observados!A:M",
         valueInputOption="RAW",
         insertDataOption="INSERT_ROWS",
         body={"values": row},
@@ -322,14 +329,14 @@ def get_precos_observados_by_scanner(
     """Return all observations for one scanner_id, oldest first."""
     service = service or get_service()
     result = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id, range="Precos_Observados!A2:L"
+        spreadsheetId=spreadsheet_id, range="Precos_Observados!A2:M"
     ).execute()
     rows = result.get("values", [])
     out = []
     for r in rows:
         if len(r) < 2 or r[1] != scanner_id:
             continue
-        r = list(r) + [""] * (12 - len(r))
+        r = list(r) + [""] * (13 - len(r))
         try:
             preco = float(str(r[4] or "0").replace(",", "."))
             preco_unid = float(str(r[5] or "0").replace(",", "."))
@@ -338,6 +345,9 @@ def get_precos_observados_by_scanner(
             preco_com_frete = float(str(r[11] or "0").replace(",", "."))
         except ValueError:
             continue
+        # Col M: winner flag. Legacy rows (blank) are winners by definition —
+        # back then only the cheapest site was ever stored.
+        is_best = str(r[12] or "TRUE").upper() != "FALSE"
         out.append({
             "timestamp": r[0],
             "scanner_id": r[1],
@@ -351,6 +361,7 @@ def get_precos_observados_by_scanner(
             "titulo": r[9],
             "frete": frete,
             "preco_com_frete": preco_com_frete,
+            "is_best": is_best,
         })
     return out
 

@@ -67,6 +67,11 @@ def _load_scans(spreadsheet_id: str, scanner_id: str, service=None) -> list[dict
     scans = sheets.get_precos_observados_by_scanner(spreadsheet_id, scanner_id, service=service)
     out: list[dict] = []
     for s in scans:
+        # Only the winning (cheapest-delivered) site of each scan feeds the
+        # alert baseline. Non-winner rows exist only for per-site charts and
+        # would inflate the baseline with more expensive sites if included.
+        if not s.get("is_best", True):
+            continue
         pu = s.get("preco_unidade") or 0
         if pu <= 0:
             continue

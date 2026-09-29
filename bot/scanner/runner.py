@@ -237,25 +237,30 @@ def run(dry_run: bool = False) -> dict:
             summary["errors"] += 1
             continue
 
-        # 4. record observation
+        # 4. record observations — one row per site so per-site price charts
+        # have data. Only global_best is flagged is_best=True; the winner is the
+        # only row that feeds the alert baseline (history._load_scans filters on
+        # the flag), so storing the others changes nothing about alerting.
         if not dry_run:
             try:
-                sheets.append_preco_observado(
-                    sid,
-                    timestamp=now.isoformat(timespec="seconds"),
-                    scanner_id=alerta.scanner_id,
-                    site=global_best.site,
-                    url=global_best.url,
-                    preco=global_best.preco,
-                    preco_unidade=global_best.preco_unidade,
-                    qtde_unidades=global_best.qtde_unidades,
-                    disponivel=global_best.disponivel,
-                    marca_detectada=global_best.marca_detectada,
-                    titulo=global_best.titulo,
-                    frete=global_best.frete,
-                    preco_com_frete=global_best.preco_com_frete,
-                    service=service,
-                )
+                for r in all_results:
+                    sheets.append_preco_observado(
+                        sid,
+                        timestamp=now.isoformat(timespec="seconds"),
+                        scanner_id=alerta.scanner_id,
+                        site=r.site,
+                        url=r.url,
+                        preco=r.preco,
+                        preco_unidade=r.preco_unidade,
+                        qtde_unidades=r.qtde_unidades,
+                        disponivel=r.disponivel,
+                        marca_detectada=r.marca_detectada,
+                        titulo=r.titulo,
+                        frete=r.frete,
+                        preco_com_frete=r.preco_com_frete,
+                        is_best=(r is global_best),
+                        service=service,
+                    )
             except Exception as e:
                 print(f"  ! append_preco_observado failed: {e}")
                 summary["errors"] += 1
