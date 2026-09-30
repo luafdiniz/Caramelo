@@ -11,6 +11,7 @@ nas células diretamente.
 - **🧮 Calculadora** — simulador de preço/margem, atualiza preço de venda
 - **🏭 Produção** — registra fornadas com distribuição entre tamanhos (vendidos/cortesia/teste)
 - **🛒 Compras** — resumo mensal, drill-down detalhado, filtros
+- **📈 Radar de Preços** — histórico do melhor preço/un de cada insumo (do scanner), com mín/máx e "tá barato/caro"
 
 ## Rodar localmente
 

@@ -710,3 +710,69 @@ def get_tamanho_costs() -> pd.DataFrame:
             "margem": margem,
         })
     return pd.DataFrame(rows)
+
+
+# --- Scanner de preços ------------------------------------------------------
+
+def _parse_obs_timestamp(value) -> pd.Timestamp:
+    """Precos_Observados.timestamp is written RAW as ISO. A few legacy rows may
+    be a Sheets date-serial float — handle both, NaT on anything else."""
+    s = str(value or "").strip()
+    if not s:
+        return pd.NaT
+    if "T" in s or "-" in s[:5]:
+        return pd.to_datetime(s, errors="coerce")
+    try:
+        serial = float(s.replace(",", "."))
+    except ValueError:
+        return pd.NaT
+    if serial <= 0 or serial > 100000:
+        return pd.NaT
+    return pd.Timestamp("1899-12-30") + pd.to_timedelta(serial, unit="D")
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_precos_observados() -> pd.DataFrame:
+    """Every price observation logged by the scanner (bot/scanner).
+
+    Column M `is_best` marks the cheapest-delivered site of each scan; legacy
+    rows (blank) are winners by definition. `preco_unidade` is the delivered
+    unit price (frete already rateado)."""
+    service = get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=_spreadsheet_id(),
+        range="Precos_Observados!A2:M",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    rows = result.get("values", [])
+    cols = ["timestamp", "scanner_id", "site", "url", "preco", "preco_unidade",
+            "qtde_unidades", "disponivel", "marca_detectada", "titulo",
+            "frete", "preco_com_frete", "is_best"]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    rows = [r + [""] * (len(cols) - len(r)) for r in rows]
+    df = pd.DataFrame(rows, columns=cols)
+    df["timestamp"] = df["timestamp"].apply(_parse_obs_timestamp)
+    for col in ("preco", "preco_unidade", "frete", "preco_com_frete"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Blank col M means legacy winner -> True.
+    df["is_best"] = df["is_best"].apply(lambda v: str(v).upper() != "FALSE")
+    df = df.dropna(subset=["timestamp"])
+    return df
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def get_scanner_alertas() -> pd.DataFrame:
+    """Scanner_Alertas config — scanner_id, insumo_id, ativo, termo_busca."""
+    service = get_service()
+    result = service.spreadsheets().values().get(
+        spreadsheetId=_spreadsheet_id(), range="Scanner_Alertas!A2:D",
+    ).execute()
+    rows = result.get("values", [])
+    cols = ["scanner_id", "insumo_id", "ativo", "termo_busca"]
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    rows = [r + [""] * (len(cols) - len(r)) for r in rows]
+    df = pd.DataFrame(rows, columns=cols)
+    df["ativo"] = df["ativo"].apply(lambda v: str(v).upper() == "TRUE")
+    return df
