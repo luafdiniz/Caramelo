@@ -1,0 +1,36 @@
+name: Keepalive
+
+# GitHub auto-disables scheduled (cron) workflows after 60 days with no
+# REPOSITORY activity (commits). The scanner runs daily but writes to Google
+# Sheets, not the repo, so the repo looks "inactive" and all the cron jobs
+# (scanner, heartbeat, daily + weekly summary) get disabled.
+#
+# This job makes a monthly empty commit to reset that 60-day timer. It uses
+# GH_PAT (not the default GITHUB_TOKEN) because commits pushed by the automatic
+# token don't reliably count as activity for the auto-disable rule, while a
+# PAT-authored commit does. One repo = one timer, so this protects every
+# scheduled workflow at once.
+
+on:
+  schedule:
+    - cron: '0 12 1 * *'   # day 1 of each month, 12:00 UTC (09:00 BRT)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (authenticated with GH_PAT)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Empty commit to reset the inactivity timer
+        run: |
+          git config user.name "Caramelo Keepalive"
+          git config user.email "caramelo-keepalive@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive — prevent scheduled-workflow auto-disable"
+          git push
